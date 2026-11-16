@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.gbif</groupId>
+    <artifactId>motherpom</artifactId>
+    <version>61</version>
+  </parent>
+
+  <artifactId>flow-orchestrator</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>flow-orchestrator</name>
+  <description>
+    Workflow orchestration service for GBIF validation and ingestion workflows. Owns workflow
+    definitions, execution state and step transitions, and dispatches work to isolated processing
+    workers through RabbitMQ.
+  </description>
+  <url>https://github.com/gbif/flow-orchestrator</url>
+
+  <modules>
+    <module>flow-orchestrator-engine</module>
+    <module>flow-orchestrator-app</module>
+  </modules>
+
+  <scm>
+    <connection>scm:git:git@github.com:gbif/flow-orchestrator.git</connection>
+    <url>https://github.com/gbif/flow-orchestrator</url>
+    <developerConnection>scm:git:git@github.com:gbif/flow-orchestrator.git</developerConnection>
+    <tag>HEAD</tag>
+  </scm>
+
+  <repositories>
+    <repository>
+      <id>gbif-all</id>
+      <url>https://repository.gbif.org/content/groups/gbif</url>
+    </repository>
+    <!-- Needed while gbif-api is consumed from a feature-branch snapshot. -->
+    <repository>
+      <id>gbif-snapshot</id>
+      <url>https://repository.gbif.org/repository/snapshots/</url>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+    </repository>
+    <repository>
+      <id>thirdparty</id>
+      <url>https://repository.gbif.org/content/repositories/thirdparty</url>
+    </repository>
+  </repositories>
+
+  <distributionManagement>
+    <repository>
+      <id>gbif-release</id>
+      <url>https://repository.gbif.org/content/repositories/releases</url>
+    </repository>
+    <snapshotRepository>
+      <id>gbif-deploy</id>
+      <url>https://repository.gbif.org/content/repositories/snapshots</url>
+    </snapshotRepository>
+  </distributionManagement>
+
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Needed to override property from parent pom which set it to 11 -->
+    <java.version>17</java.version>
+
+    <!-- Dependency versions -->
+    <spring-boot.version>3.5.8</spring-boot.version>
+    <!-- Feature-branch build: VALIDATOR_*DWCDP* StepTypes are not released yet. -->
+    <gbif-api.version>2.4.30-FEATURE-ADD-DWCDP-DATA-VALIDATION-SNAPSHOT</gbif-api.version>
+    <gbif-postal-service.version>2.1.14</gbif-postal-service.version>
+    <junit-jupiter.version>5.12.2</junit-jupiter.version>
+    <net.logstash.logback.version>7.4</net.logstash.logback.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit-jupiter.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.gbif</groupId>
+        <artifactId>flow-orchestrator-engine</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.gbif</groupId>
+        <artifactId>gbif-api</artifactId>
+        <version>${gbif-api.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.gbif.common</groupId>
+        <artifactId>gbif-postal-service</artifactId>
+        <version>${gbif-postal-service.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.logstash.logback</groupId>
+        <artifactId>logstash-logback-encoder</artifactId>
+        <version>${net.logstash.logback.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <version>${spring-boot.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>
