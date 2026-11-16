@@ -20,6 +20,10 @@
   <dependencies>
     <dependency>
       <groupId>org.gbif</groupId>
+      <artifactId>flow-orchestrator-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.gbif</groupId>
       <artifactId>flow-orchestrator-engine</artifactId>
     </dependency>
 

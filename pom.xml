@@ -21,6 +21,7 @@
   <url>https://github.com/gbif/flow-orchestrator</url>
 
   <modules>
+    <module>flow-orchestrator-api</module>
     <module>flow-orchestrator-engine</module>
     <module>flow-orchestrator-app</module>
   </modules>
@@ -94,6 +95,11 @@
         <version>${junit-jupiter.version}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.gbif</groupId>
+        <artifactId>flow-orchestrator-api</artifactId>
+        <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>org.gbif</groupId>

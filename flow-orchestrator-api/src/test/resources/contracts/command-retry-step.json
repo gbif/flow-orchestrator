@@ -1,0 +1,11 @@
+{
+  "commandId": "6f1c2a3e-1111-4a8b-9c0d-000000000002",
+  "type": "RETRY_STEP",
+  "datasetKey": "673f2308-3501-474f-85d5-a832825bb46c",
+  "attempt": 1,
+  "step": "VALIDATOR_VALIDATE_DWCDP",
+  "parameters": {},
+  "requestedBy": "jdoe",
+  "reason": "Analyser was down",
+  "requestedAt": "2026-11-16T12:30:00Z"
+}

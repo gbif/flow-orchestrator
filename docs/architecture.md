@@ -27,7 +27,7 @@ configuration, the DwC-DP integration and the `local-test/` Compose environment.
 Phase A rounds (Proposed order):
 
 1. Repository scaffold, pure engine port, this document. *(done)*
-2. Contracts: the `flow-orchestrator-api` module (section 6a). It holds the command messages, the
+2. Contracts: the `flow-orchestrator-api` module (section 6a). *(done)* It holds the command messages, the
    completion envelope, the workflow-finished event and the report type constants.
 3. Persistence: table DDL as registry Liquibase changesets, a mirrored H2 test schema, `JdbcClient`
    repositories, state loading with locking, and command handling (`workflow_command`).
@@ -107,10 +107,14 @@ Proposal:
   becomes the source of truth. Workers still use the graph today (`getLevel`, balancer routing),
   so it is removed after Phase C, not moved.
 
-**Open**
+**Parked (side task, not part of this migration):** a broader restructuring of gbif-api.
 
-- The artifact name, and whether the `PipelineStep`/history model goes with it or stays in
-  gbif-api.
+- Each `model/*` package (and its matching service interfaces) would become its own submodule,
+  under a `model` parent, so the package hierarchy is kept.
+- The root keeps the `gbif-api` coordinates as an aggregate that depends on all of them. Nothing
+  changes for existing consumers, and new consumers can depend on just the pieces they need.
+- The pipelines package is the first candidate. Feasibility (cross-package references such as
+  `LenientEquals` and the Jackson utilities) is not yet assessed.
 
 ### Engine changes made during the port
 
@@ -152,13 +156,23 @@ Proposal:
 Consequence: an orchestrator change that touches tables needs a matching registry changeset and
 registry release. Rounds that change the schema list the registry changesets they need.
 
-### 2a. Commands (Proposed details)
+### 2a. Commands (Decided)
 
-- Command message fields:
+- **One flat record**, `WorkflowCommand` in `flow-orchestrator-api` (`api.command`):
   - `commandId`: UUID, the idempotency key.
   - `type`: `START`, `RETRY_STEP`, `RERUN_FROM` or `RESTART`.
-  - The subject (`datasetKey`, attempt) and the target step, where relevant.
-  - `requestedBy` and `reason`.
+  - `domain`: `VALIDATION` or `INGESTION`.
+  - `datasetKey` and `attempt`: the subject.
+  - `step`: the target step.
+  - `parameters`: a free-form `Map<String,String>`.
+  - `requestedBy`, `reason` and `requestedAt`.
+
+  The record's constructor validates the fields each type needs: `START` requires `domain`, and
+  `RETRY_STEP`/`RERUN_FROM` require `step`.
+- **`START` = domain + parameters.** Registry does not name a workflow. The orchestrator's
+  configuration maps domain plus parameters (for example `fileFormat=DWCDP`) to a workflow
+  definition. The step choice that validator-ws makes today in `StepResolverService` moves into
+  the orchestrator.
 - Commands are handled in the same locked transaction as completions (section 3). The orchestrator
   inserts a `workflow_command` row with a unique `commandId`, so a duplicate delivery is a no-op.
 - The outcome is stored on the row: `ACCEPTED`, or `REJECTED` with a reason (for example "step is
@@ -166,7 +180,25 @@ registry release. Rounds that change the schema list the registry changesets the
   processing", not a synchronous verdict.
 - Registry may pre-check requests using its read access to give fast feedback. The orchestrator's
   check is authoritative.
-- Command contracts live in the future `flow-orchestrator-api` module, which registry depends on.
+- Command contracts live in the `flow-orchestrator-api` module, which registry depends on.
+
+**Open: where upload preparation happens.** Today validator-ws receives the multipart upload or a
+URL, writes it to its store directory, then unzips and detects media type and format
+asynchronously (`FileStoreManager`, `DownloadFileManager`, `MediaTypeAndFormatDetector`). During
+this the status is SUBMITTED or DOWNLOADING. The detected format chooses the steps. Registry-ws has
+no NFS mount today; only `registry-cli` `DwcaDataIndexer` touches crawler directories.
+
+- *Option 1, registry does it all:* registry knows the archive content before the workflow
+  starts, and sends `START` with the detected format. Cost: registry-ws needs the NFS mount and the
+  asynchronous unzip and download work, and the orchestrator sees nothing until `START`.
+- *Option 2, first workflow step:* registry only writes the raw multipart bytes (a URL needs
+  nothing). A `VALIDATOR_UPLOAD_ARCHIVE` worker downloads, unzips and detects, and returns the
+  format in its outputs. A decision hook then skips the other formats' branches
+  (`WorkflowChange.SKIP`). The work is retryable and visible as a step. Registry reads the
+  detected format from the step outputs.
+
+`START`'s free-form `parameters` support both options, so the contracts do not depend on this
+decision.
 
 ## 3. Workflow lifecycle and hooks
 
@@ -417,7 +449,39 @@ configuration on the side that uses it:
 
 ## 6a. Message contracts: `flow-orchestrator-api` (Decided)
 
-Plain records, serialized with Jackson, carrying no exchange or routing key.
+Plain records, serialized with Jackson, carrying no exchange or routing key. Implemented in round 2:
+
+| Package | Types |
+|---|---|
+| `api.command` | `WorkflowCommand`, `CommandType`, `Domain` |
+| `api.step` | `StepHeader`, `StepCompleted`, `Outcome`, `Report` |
+| `api.event` | `WorkflowFinished`, `WorkflowResult` |
+| `api.report` | `ReportTypes` (String constants) |
+| `api.json` | `OrchestratorJson`: the Jackson settings for the contracts |
+
+- **Dependencies.**
+  - Jackson (annotations, databind, jsr310) at compile scope.
+  - `gbif-api` at **`provided`** scope, used only for `StepType`. Each consumer keeps its own
+    gbif-api version; registry is on an older release.
+  - No Spring and no postal.
+- **Step types.** A receiver must know every `StepType` it deserializes. The orchestrator always
+  has the newest. `WorkflowFinished` deliberately carries no `StepType`, so registry only ever
+  *sends* step types (in commands).
+- **Compatibility.**
+  - Every record has `@JsonIgnoreProperties(ignoreUnknown = true)`, so a newer sender does not
+    break an older consumer.
+  - Consumers using their own `ObjectMapper` must at least register `JavaTimeModule`.
+    `OrchestratorJson.configure(mapper)` applies all the settings: ISO-8601 instants, nulls left
+    out, and unknown properties ignored.
+- **Validation.** The rules are enforced in the record constructors, so both sender and receiver
+  fail fast:
+  - required fields;
+  - attempts ≥ 1;
+  - a diagnostic when the outcome is not `SUCCEEDED`;
+  - no duplicate report types;
+  - `rejected` only with `FAILED`.
+- **Golden fixtures.** The JSON in `flow-orchestrator-api/src/test/resources/contracts/` locks the
+  wire format. Change a fixture only together with a deliberate contract change.
 
 ```java
 // worker → orchestrator: one envelope for all adapted workers

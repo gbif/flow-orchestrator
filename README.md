@@ -9,13 +9,14 @@ Workers do not manage workflow state.
 This repository replaces the former `validator-orchestrator` module in the pipelines repository.
 The redesign is tracked in [docs/architecture.md](docs/architecture.md).
 
-**Status:** Phase A, round 1. The pure DAG engine and a skeleton service are in place. Persistence,
+**Status:** Phase A, round 2. The engine, the message contracts and a skeleton service are in place. Persistence,
 messaging and step integrations are not ported yet.
 
 ## Modules
 
 | Module | Purpose |
 |---|---|
+| `flow-orchestrator-api` | Message contracts as plain records (commands, step completions, workflow events, report types). Jackson only; gbif-api `provided`. |
 | `flow-orchestrator-engine` | Pure Java workflow engine: DAG definitions, join policies, transition decisions. No Spring, DB or messaging. |
 | `flow-orchestrator-app` | Spring Boot service: configuration, Actuator, and later persistence, messaging and step integrations. |
 

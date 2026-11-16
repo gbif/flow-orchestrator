@@ -1,0 +1,13 @@
+{
+  "workflowId": "6f1c2a3e-3333-4a8b-9c0d-000000000004",
+  "domain": "VALIDATION",
+  "datasetKey": "673f2308-3501-474f-85d5-a832825bb46c",
+  "attempt": 1,
+  "result": "FAILED",
+  "rejected": true,
+  "reportTypes": [
+    "DWCDP_ANALYSIS",
+    "SUMMARY"
+  ],
+  "finishedAt": "2026-11-16T12:01:11Z"
+}

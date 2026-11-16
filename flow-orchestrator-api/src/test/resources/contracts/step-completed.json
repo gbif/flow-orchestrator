@@ -1,0 +1,31 @@
+{
+  "messageId": "6f1c2a3e-2222-4a8b-9c0d-000000000003",
+  "header": {
+    "workflowId": "6f1c2a3e-3333-4a8b-9c0d-000000000004",
+    "datasetKey": "673f2308-3501-474f-85d5-a832825bb46c",
+    "attempt": 1,
+    "stepType": "VALIDATOR_VALIDATE_DWCDP",
+    "stepAttempt": 2
+  },
+  "outcome": "REJECTED",
+  "diagnostic": "Invalid DwC-DP",
+  "outputs": {
+    "hasOccurrences": "true",
+    "hasEvents": "false"
+  },
+  "reports": [
+    {
+      "type": "DWCDP_ANALYSIS",
+      "content": {
+        "valid": false,
+        "resourceAnalysisResults": [
+          {
+            "name": "occurrence"
+          }
+        ]
+      }
+    }
+  ],
+  "startedAt": "2026-11-16T12:00:05Z",
+  "finishedAt": "2026-11-16T12:01:10Z"
+}
