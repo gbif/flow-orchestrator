@@ -15,9 +15,12 @@ package org.gbif.orchestrator.engine;
 
 import org.gbif.api.model.pipelines.StepType;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -118,11 +121,61 @@ public final class DagDefinition {
     return nodes.keySet();
   }
 
+  /** The steps that depend on {@code type}, directly or transitively; {@code type} excluded. */
+  public Set<StepType> downstreamOf(StepType type) {
+    require(type);
+    Set<StepType> downstream = new LinkedHashSet<>();
+    Deque<StepType> pending = new ArrayDeque<>(List.of(type));
+    while (!pending.isEmpty()) {
+      StepType current = pending.pop();
+      for (Node node : nodes.values()) {
+        if (node.dependencies().contains(current) && downstream.add(node.type())) {
+          pending.push(node.type());
+        }
+      }
+    }
+    return downstream;
+  }
+
   public JoinPolicy policy(Node node) {
     return node.joinPolicy() == null ? defaultJoinPolicy : node.joinPolicy();
   }
 
   public boolean parallel() {
     return parallel;
+  }
+
+  public JoinPolicy defaultJoinPolicy() {
+    return defaultJoinPolicy;
+  }
+
+  /**
+   * All steps in a deterministic topological order: every step comes after its dependencies, and
+   * steps that are ready at the same time are ordered by name.
+   */
+  public List<StepType> topologicalOrder() {
+    Map<StepType, Integer> remaining = new HashMap<>();
+    for (Node node : nodes.values()) {
+      remaining.put(node.type(), node.dependencies().size());
+    }
+    java.util.TreeSet<StepType> ready =
+        new java.util.TreeSet<>(java.util.Comparator.comparing(StepType::name));
+    remaining.forEach(
+        (type, count) -> {
+          if (count == 0) {
+            ready.add(type);
+          }
+        });
+    List<StepType> order = new ArrayList<>(nodes.size());
+    while (!ready.isEmpty()) {
+      StepType next = ready.pollFirst();
+      order.add(next);
+      for (Node node : nodes.values()) {
+        if (node.dependencies().contains(next) && remaining.merge(node.type(), -1, Integer::sum) == 0) {
+          ready.add(node.type());
+        }
+      }
+    }
+    return List.copyOf(order);
   }
 }

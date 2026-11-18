@@ -3,8 +3,9 @@
   "domain": "VALIDATION",
   "datasetKey": "673f2308-3501-474f-85d5-a832825bb46c",
   "attempt": 1,
-  "result": "FAILED",
+  "result": "FINISHED",
   "rejected": true,
+  "reason": "DwC-DP analysis: the data package is invalid",
   "reportTypes": [
     "DWCDP_ANALYSIS",
     "SUMMARY"

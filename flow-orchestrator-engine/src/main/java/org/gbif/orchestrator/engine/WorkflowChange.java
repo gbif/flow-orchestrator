@@ -17,11 +17,14 @@ import org.gbif.api.model.pipelines.StepType;
 
 import java.util.Objects;
 
-/** Request to exclude an as-yet-unstarted step from the active DAG. */
+/** Request to exclude as-yet-unstarted steps from the active DAG. */
 public record WorkflowChange(StepType step, Kind kind) {
 
   public enum Kind {
-    SKIP
+    /** Skip only this step; the join policy decides what happens to the steps after it. */
+    SKIP,
+    /** Skip this step and every step downstream of it. */
+    SKIP_FROM
   }
 
   public WorkflowChange {
@@ -31,5 +34,9 @@ public record WorkflowChange(StepType step, Kind kind) {
 
   public static WorkflowChange skip(StepType step) {
     return new WorkflowChange(step, Kind.SKIP);
+  }
+
+  public static WorkflowChange skipFrom(StepType step) {
+    return new WorkflowChange(step, Kind.SKIP_FROM);
   }
 }

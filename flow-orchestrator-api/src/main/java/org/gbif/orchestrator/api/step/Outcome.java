@@ -13,12 +13,15 @@
  */
 package org.gbif.orchestrator.api.step;
 
-/** What happened to the work of a step attempt. It says nothing about what runs next. */
+/**
+ * What happened to the work of a step attempt. It says nothing about what runs next, and nothing
+ * about whether the data is acceptable: a step that ran correctly on invalid data {@link
+ * #SUCCEEDED}, and its reports say what is wrong. The orchestrator interprets the reports and
+ * decides (for example to reject the workflow).
+ */
 public enum Outcome {
   /** The work completed. */
   SUCCEEDED,
-  /** The worker failed (exception, infrastructure problem). Retrying may help. */
-  FAILED,
-  /** The worker ran correctly, but the data is invalid. Retrying the same data will not help. */
-  REJECTED
+  /** The worker could not do the work (exception, infrastructure problem). Retrying may help. */
+  FAILED
 }

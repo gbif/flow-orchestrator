@@ -33,9 +33,12 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * @param domain workflow domain
  * @param datasetKey subject of the workflow
  * @param attempt subject attempt, at least 1
- * @param result terminal result
- * @param rejected true when the workflow failed because the data was rejected (invalid), rather
- *     than because processing failed
+ * @param result terminal result. {@code FAILED} means a technical error (our side); a business
+ *     rejection of the data is {@code FINISHED} with {@code rejected} set
+ * @param rejected true when the orchestrator rejected the data (for example an invalid data
+ *     package), based on the step reports; only valid with {@code FINISHED}
+ * @param reason human-readable reason for the outcome, for example why the data was rejected or
+ *     why the workflow stopped early; optional
  * @param reportTypes types of the reports stored for this execution; never null
  * @param finishedAt when the workflow reached its terminal state
  */
@@ -47,6 +50,7 @@ public record WorkflowFinished(
     int attempt,
     WorkflowResult result,
     boolean rejected,
+    String reason,
     List<String> reportTypes,
     Instant finishedAt) {
 
@@ -59,8 +63,8 @@ public record WorkflowFinished(
     if (attempt < 1) {
       throw new IllegalArgumentException("attempt must be at least 1");
     }
-    if (rejected && result != WorkflowResult.FAILED) {
-      throw new IllegalArgumentException("rejected is only valid for result FAILED");
+    if (rejected && result != WorkflowResult.FINISHED) {
+      throw new IllegalArgumentException("rejected is only valid for result FINISHED");
     }
     reportTypes = reportTypes == null ? List.of() : List.copyOf(reportTypes);
   }

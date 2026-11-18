@@ -1,0 +1,87 @@
+version: '3'
+
+dotenv:
+  - .env
+
+vars:
+  COMPOSE: podman compose -f compose.yaml
+
+env:
+  COMPOSE: '{{.COMPOSE}}'
+
+tasks:
+  default:
+    desc: List local integration tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the orchestrator image from the shaded JAR (run "mvn package" in the repository first)
+    dir: ..
+    cmds:
+      - |
+        set -eu
+        set -- flow-orchestrator-app/target/*-shaded.jar
+        if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+          echo 'Expected exactly one flow-orchestrator-app/target/*-shaded.jar; run mvn package first.' >&2
+          exit 1
+        fi
+        podman build \
+          --build-arg BASE_REGISTRY=docker.gbif.org/third-party \
+          --build-arg "JAR_FILE=$1" \
+          -f docker/Dockerfile \
+          -t localhost/flow-orchestrator:test .
+
+  up:
+    desc: Start Postgres, RabbitMQ and the orchestrator
+    cmds:
+      - '{{.COMPOSE}} up -d'
+
+  up:analyser:
+    desc: Start everything including the real analyser (needs DATAPACKAGES_DIR and DWCDP_WORKDIR in .env)
+    cmds:
+      - |
+        set -eu
+        : "${DATAPACKAGES_DIR:?Set DATAPACKAGES_DIR in .env}"
+        : "${DWCDP_WORKDIR:?Set DWCDP_WORKDIR in .env}"
+        case "$DATAPACKAGES_DIR" in /*) ;; *) echo 'DATAPACKAGES_DIR must be absolute' >&2; exit 1 ;; esac
+        case "$DWCDP_WORKDIR" in /*) ;; *) echo 'DWCDP_WORKDIR must be absolute' >&2; exit 1 ;; esac
+        [ -d "$DATAPACKAGES_DIR" ] || { echo "Datapackage directory not found: $DATAPACKAGES_DIR" >&2; exit 1; }
+        mkdir -p "$DWCDP_WORKDIR"
+        {{.COMPOSE}} --profile analyser up -d
+
+  balancer:
+    desc: Bind a stand-in queue for the pipelines balancer, so pipelines requests are routable
+    cmds:
+      - scripts/balancer-queue.sh
+
+  trigger:
+    desc: Start a validation (CHAIN=analysis by default, or full) for a datapackage UUID
+    requires:
+      vars: [UUID]
+    cmds:
+      - scripts/trigger.sh '{{.UUID}}' '{{.ATTEMPT | default "1"}}' '{{.CHAIN | default "analysis"}}'
+
+  complete:
+    desc: Simulate a pipelines step's reply (OUTCOME=SUCCEEDED, FAILED, or INVALID for identifiers)
+    requires:
+      vars: [UUID, STEP]
+    cmds:
+      - scripts/complete.sh '{{.UUID}}' '{{.STEP}}' '{{.OUTCOME | default "SUCCEEDED"}}' '{{.ATTEMPT | default "1"}}'
+
+  status:
+    desc: Show the workflow, steps, reports and unpublished outbox rows of a dataset
+    requires:
+      vars: [UUID]
+    cmds:
+      - scripts/status.sh '{{.UUID}}'
+
+  logs:
+    desc: Follow orchestrator and analyser logs
+    cmds:
+      - '{{.COMPOSE}} --profile analyser logs -f --tail=100 orchestrator analyser'
+
+  down:
+    desc: Stop and remove the environment, including the database
+    cmds:
+      - '{{.COMPOSE}} --profile analyser down -v'

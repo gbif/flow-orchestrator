@@ -1,0 +1,46 @@
+# Test overrides, loaded in addition to the main application.yml.
+spring:
+  datasource:
+    url: jdbc:h2:mem:orchestrator-${random.uuid};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-h2.sql
+
+orchestrator:
+  domain: VALIDATION
+  workflows:
+    validation-dwcdp:
+      domain: VALIDATION
+      match:
+        fileFormat: DWCDP
+      nodes:
+        - step: VALIDATOR_VALIDATE_DWCDP
+        - step: VALIDATOR_DWCDP_STAGE
+          dependencies: [VALIDATOR_VALIDATE_DWCDP]
+        - step: VALIDATOR_DWCDP_TO_VERBATIM
+          dependencies: [VALIDATOR_DWCDP_STAGE]
+  steps:
+    VALIDATOR_VALIDATE_DWCDP:
+      request:
+        exchange: occurrence
+        routing-key: validator.dwcdp.analysis
+    VALIDATOR_DWCDP_STAGE:
+      request:
+        exchange: occurrence
+        routing-key: validator.dwcdp.stage
+    VALIDATOR_DWCDP_TO_VERBATIM:
+      request:
+        exchange: occurrence
+        routing-key: validator.dwcdp.toverbatim
+  messaging:
+    # no broker in tests; listeners and relay are tested directly
+    enabled: false
+    workflow-finished:
+      exchange: orchestrator
+      routing-key: validation.workflow.finished
+  database:
+    # H2 stores CAST(? AS jsonb) as a JSON string; FORMAT JSON parses it (see JsonSql)
+    json-parameter: ":%s FORMAT JSON"

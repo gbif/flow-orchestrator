@@ -1,0 +1,4 @@
+.env
+Taskfile.yml
+workdir/
+datapackages/

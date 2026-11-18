@@ -75,7 +75,8 @@
     <spring-boot.version>3.5.8</spring-boot.version>
     <!-- Feature-branch build: VALIDATOR_*DWCDP* StepTypes are not released yet. -->
     <gbif-api.version>2.4.30-FEATURE-ADD-DWCDP-DATA-VALIDATION-SNAPSHOT</gbif-api.version>
-    <gbif-postal-service.version>2.1.14</gbif-postal-service.version>
+    <!-- Snapshot: needs the builders for confirms, mandatory and dead-lettering (2.1.16). -->
+    <gbif-postal-service.version>2.1.16-SNAPSHOT</gbif-postal-service.version>
     <junit-jupiter.version>5.12.2</junit-jupiter.version>
     <net.logstash.logback.version>7.4</net.logstash.logback.version>
   </properties>

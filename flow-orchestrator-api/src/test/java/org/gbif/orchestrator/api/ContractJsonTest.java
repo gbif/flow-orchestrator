@@ -100,8 +100,9 @@ class ContractJsonTest {
             Domain.VALIDATION,
             DATASET,
             1,
-            WorkflowResult.FAILED,
+            WorkflowResult.FINISHED,
             true,
+            "DwC-DP analysis: the data package is invalid",
             List.of(ReportTypes.DWCDP_ANALYSIS, ReportTypes.SUMMARY),
             Instant.parse("2026-11-16T12:01:11Z"));
     assertMatchesFixture("workflow-finished.json", expected, WorkflowFinished.class);
@@ -135,9 +136,10 @@ class ContractJsonTest {
     return new StepCompleted(
         UUID.fromString("6f1c2a3e-2222-4a8b-9c0d-000000000003"),
         new StepHeader(WORKFLOW, DATASET, 1, StepType.VALIDATOR_VALIDATE_DWCDP, 2),
-        Outcome.REJECTED,
-        "Invalid DwC-DP",
-        Map.of("hasOccurrences", "true", "hasEvents", "false"),
+        // invalid data is a successful step; the orchestrator reads the report
+        Outcome.SUCCEEDED,
+        null,
+        Map.of("datapackagePath", "/mnt/auto/crawler/dwcdp/673f2308-3501-474f-85d5-a832825bb46c/1"),
         List.of(new Report(ReportTypes.DWCDP_ANALYSIS, analysis, null)),
         Instant.parse("2026-11-16T12:00:05Z"),
         Instant.parse("2026-11-16T12:01:10Z"));

@@ -1,6 +1,12 @@
 spring:
   application:
     name: flow-orchestrator
+  # Registry PostgreSQL database. The orchestrator tables are created by registry changesets
+  # (189-orchestrator-tables), applied by hand; the orchestrator runs no migrations.
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
 
 management:
   endpoint:
@@ -15,14 +21,66 @@ management:
     tags:
       application: ${spring.application.name}
 
-# Workflow DAG. Node keys are gbif-api StepType names. Example:
+orchestrator:
+  # The single domain this instance processes (VALIDATION or INGESTION). Required; no default.
+  domain: ${ORCHESTRATOR_DOMAIN}
+
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USERNAME:guest}
+    password: ${RABBIT_PASSWORD:guest}
+    virtual-host: ${RABBIT_VHOST:/}
+
+  # Queue and routing-key names are prefixed per instance, for example "validation" or
+  # "ingestion", so both domains can share a vhost. ORCHESTRATOR_MESSAGING_PREFIX is required (an
+  # empty prefix gives invalid names and stops startup).
+  messaging:
+    enabled: ${ORCHESTRATOR_MESSAGING_ENABLED:true}
+    prefix: ${ORCHESTRATOR_MESSAGING_PREFIX:}
+    dead-letter-exchange: orchestrator.dlx
+    commands:
+      exchange: orchestrator
+      routing-key: ${orchestrator.messaging.prefix}.command
+      queue: orchestrator.${orchestrator.messaging.prefix}.commands
+      threads: 2
+    completions:
+      exchange: orchestrator
+      routing-key: ${orchestrator.messaging.prefix}.step.completed
+      queue: orchestrator.${orchestrator.messaging.prefix}.step.completed
+      threads: 4
+    # Legacy completions of the dwc-dp-analyser-service (DwcDpValidationFinished). Deploy the
+    # analyser with output exchange "orchestrator" and this routing key.
+    dwcdp-analysis-finished:
+      exchange: orchestrator
+      routing-key: ${orchestrator.messaging.prefix}.dwcdp.analysis.finished
+      queue: orchestrator.${orchestrator.messaging.prefix}.dwcdp.analysis.finished
+      threads: 2
+    workflow-finished:
+      exchange: orchestrator
+      routing-key: ${orchestrator.messaging.prefix}.workflow.finished
+
+  relay:
+    poll-interval: 1s
+    batch-size: 100
+    confirm-timeout: 10s
+    max-backoff: 5m
+
+# Example workflow and step routing. Node keys are gbif-api StepType names; every step used in a
+# workflow must have request routing.
+#
 # orchestrator:
-#   workflow:
-#     parallel: false
-#     default-join-policy: NON_ERROR
-#     nodes:
-#       VALIDATOR_VALIDATE_DWCDP: {}
-#       VALIDATOR_DWCDP_STAGE:
-#         dependencies: [VALIDATOR_VALIDATE_DWCDP]
-#       VALIDATOR_DWCDP_TO_VERBATIM:
-#         dependencies: [VALIDATOR_DWCDP_STAGE]
+#   workflows:
+#     validation-dwcdp:
+#       domain: VALIDATION
+#       match:
+#         fileFormat: DWCDP
+#       parallel: false
+#       default-join-policy: NON_ERROR
+#       nodes:
+#         - step: VALIDATOR_VALIDATE_DWCDP
+#   steps:
+#     VALIDATOR_VALIDATE_DWCDP:
+#       request:
+#         exchange: ${DWCDP_REQUEST_EXCHANGE:occurrence}
+#         routing-key: ${DWCDP_REQUEST_ROUTING_KEY:validator.dwcdp.analysis}

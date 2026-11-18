@@ -30,16 +30,108 @@ Phase A rounds (Proposed order):
 2. Contracts: the `flow-orchestrator-api` module (section 6a). *(done)* It holds the command messages, the
    completion envelope, the workflow-finished event and the report type constants.
 3. Persistence: table DDL as registry Liquibase changesets, a mirrored H2 test schema, `JdbcClient`
-   repositories, state loading with locking, and command handling (`workflow_command`).
-4. Messaging: transactional outbox, relay with publisher confirms, completion consumers.
-5. Step contract redesign, the DwC-DP analyser adapter (existing wire contract) and the summary
-   report builder, plus a ported `local-test/`.
+   repositories, state loading with optimistic versioning, START handling and outbox rows. *(done)*
+4. Messaging: outbox relay with publisher confirms, command and completion listeners with
+   dead-letter queues (postal-service extended with builders, section 6), completion handling,
+   the `workflow_report` table, the contract change from section 4a (no `REJECTED` outcome,
+   verdict on `WorkflowFinished`) and the `reason` columns. *(done)*
+5. The DwC-DP validation chain end to end (scope widened on 2026-11-18, see "Round 5 plan" below), *(done)*:
+   step contract redesign, the analyser adapter, report interpreters and `SKIP_FROM`, the
+   pipelines DwC-DP validator jobs in orchestrator mode, and a ported `local-test/`. The summary
+   report builder moves to Phase B.
 6. Retry, rerun and recovery (timeouts, stale-attempt handling).
 
-**Decided:** during Phase A the orchestrator keeps the existing worker contracts: the DwC-DP
-analyser request JSON and the `DwcDpValidationFinished` completion, correlated by
-`datasetUuid + attempt`. The new envelope is defined in Phase A (round 2), and workers adopt it in
-Phase B.
+### Round 5 plan (Decided 2026-11-18)
+
+Workflow `validation-dwcdp`: VALIDATE_DWCDP → DWCDP_STAGE → DWCDP_TO_VERBATIM →
+VERBATIM_TO_IDENTIFIER → VERBATIM_TO_INTERPRETED → COLLECT_METRICS.
+
+**flow-orchestrator**
+- Engine: `SKIP_FROM(step)` (the step and everything downstream of it become `SKIPPED`).
+- Per step type: a `RequestFactory` (`StepContext` → payload; the context holds the header, the
+  execution, the outputs of completed steps and the stored reports) and the routing from config.
+- Report interpreters by domain and step: `DWCDP_ANALYSIS` with `metadata.isValid=false` and
+  `IDENTIFIERS` with `isResultValid=false` skip the rest; the workflow ends `FINISHED`, rejected.
+- Analyser adapter: an adapter queue for `DwcDpValidationFinished`, correlated by
+  `datasetUuid + attempt` to the running VALIDATE_DWCDP attempt and mapped to `StepCompleted`
+  (`SUCCEEDED`, report `DWCDP_ANALYSIS` = the `AnalysisExecution`).
+- Pipelines requests: the existing postal message class with a `stepHeader`, wrapped in
+  `PipelinesBalancerMessage` and sent to the balancer. Counts and `datasetType` come from earlier
+  steps' outputs. The orchestrator does not send `containsOccurrences`/`containsEvents` (see
+  below).
+- **No data-shape flags in validation.** The flags existed because registry had to register the
+  whole workflow up front, and they selected the flow. The orchestrator now writes every step of
+  the chosen definition as a `PENDING` row at START, so registry and the portal can show future
+  steps from `step_execution` (Phase B readers). In orchestrator mode, to-verbatim derives events
+  and occurrences from the staged counts (`dwcdp-stage.yml`, `COUNT_<RESOURCE>` > 0) and reports
+  what it produced (`datasetType`) as an output. Ingestion keeps the flags until Phase C.
+- Senders know exchange and routing key; consumers declare their queue and bind it.
+
+**dwc-dp-analyser-service**
+- `DwcDpValidationFinished.validationReport` becomes the whole `AnalysisExecution`
+  (`{result, metadata: {started, finished, features, isValid}, version}`); `valid` stays.
+  **Breaking for the crawler** (`crawl.dwcdp.validation.finished`): analyser-service-api, postal's
+  `DwcDpValidationFinishedMessage` and the crawler are released together.
+- New options for the input exchange and routing key; the analyser binds its own queue.
+- Its `ObjectMapper` ignores unknown properties.
+
+**postal-service**
+- Optional `stepHeader` on `DwcDpStageMessage`, `DwcDpToVerbatimMessage`,
+  `PipelinesVerbatimMessage` and `PipelinesInterpretedMessage`, typed as `Map<String, Object>`:
+  postal does not depend on `flow-orchestrator-api`. pipelines converts it to `StepHeader`
+  (`convertValue`), so the record's checks run before any work starts. The map is replaced when
+  the request records move into `flow-orchestrator-api` (section 6a); the JSON stays the same.
+- `DwcDpValidationFinishedMessage` follows the analyser change.
+- Release order: flow-orchestrator-api, analyser-service-api and postal (any order) → pipelines
+  and crawler.
+
+**pipelines (validation only; ingestion and DwC-A validation keep today's behaviour)**
+- A validator callback whose message has a `stepHeader` runs in orchestrator mode: no
+  validator-ws calls, no next message, and a `StepCompleted` at the end (`FAILED` with the
+  exception message on error), sent to the configured exchange and routing key. Without a
+  header, it behaves exactly as today.
+- The balancer handlers keep the `stepHeader` when they re-route.
+- Identifier validation: invalid results are a `SUCCEEDED` step with an `IDENTIFIERS` report.
+- To-verbatim: the conversion reports as `DWCDP_CONVERSION`. Metrics: `collect-metrics.json` as
+  `INTERPRETATION_METRICS`, and the supplied terms derived from the data, not from validator-ws.
+- Outputs for later steps: the record counts and `datasetType`.
+- To-verbatim in orchestrator mode ignores the message flags and reads the staged counts instead.
+
+**local-test:** Compose with Postgres (registry changeset 189 SQL), RabbitMQ, the orchestrator
+and the real analyser, plus a trigger that publishes a `WorkflowCommand`. Implemented as `local-test/` (USAGE.md):
+the pipelines steps can be simulated with `task complete`.
+
+**Decided during the round**
+
+- **java-time in messages.** The analyser's `AnalysisExecution` carries `LocalDateTime` values.
+  postal registers Jackson's java-time module on every mapper it uses (`MessageUtils.configure`),
+  so postal consumers such as the crawler read them. The analyser writes them as ISO
+  `LocalDateTime` (UTC) in messages; its registry PUT keeps the `+00:00` form. The orchestrator
+  adapter accepts both.
+- **Outputs between steps** are named in `OutputKeys`; a request takes an output from the latest
+  finished step that reported it.
+- **Request routing for pipelines steps** is the balancer (`occurrence` /
+  `occurrence.pipelines.balancer`) in configuration; the balancer handlers copy the `stepHeader`
+  when they re-route.
+
+**Known limitations (round 6 or later)**
+
+- The analyser sends nothing when it fails, and a pipelines job whose reply cannot be published
+  only logs it: the step stays dispatched until timeout handling (round 6).
+- A request that needs an output no earlier step reported fails inside the completion
+  transaction, so that completion is dead-lettered (`MissingOutputException` in the log).
+- An event-only DwC-DP dataset (events, no occurrences) takes the balancer's events path, which
+  is not validator-aware; it never reaches the identifier step. Already broken before the
+  orchestrator.
+- A rejection while parallel branches are still running does not end the workflow, and the
+  verdict is not kept (logged as a warning). The DwC-DP DAG is linear.
+
+**Decided:** during Phase A the orchestrator keeps the existing worker *request* contracts: the
+DwC-DP analyser request JSON and the pipelines postal messages (with an added `stepHeader`). The
+analyser keeps its `DwcDpValidationFinished` completion, correlated by `datasetUuid + attempt`
+(round 5 changed its `validationReport` to the whole `AnalysisExecution`). The pipelines DwC-DP
+validator jobs adopted the `StepCompleted` envelope in round 5 (scope widened by decision); the
+other workers adopt it in Phase B.
 
 **Decided (Phase B order):** the **DwC-DP** validation chain is adapted end to end first, then the
 **DwC-A** chain (DWCA, TABULAR, SPREADSHEET, XML, and ChecklistBank for checklists and COLDP).
@@ -209,18 +301,35 @@ writes state over HTTP, then publishes. None of this is atomic.
 **Proposed**: every inbound command or completion is handled in one DB transaction:
 
 1. Deserialize the message and identify `(workflow execution, step, attempt)`.
-2. `SELECT … FOR UPDATE` on the `workflow_execution` row. This serializes events per workflow,
-   whatever the consumer thread count or number of instances.
+2. Load the workflow (execution row with its `version`, plus its step rows). No row lock is
+   taken.
 3. Reject stale or duplicate events by checking the attempt and the step status.
 4. Interpret the completion and outcome through the step contract (section 4).
-5. Run *decision hooks*. These are pure functions of `(state, completion)` that return
-   `WorkflowChange`s (for example `SKIP`) and step outputs. They are the successor of
-   `WorkflowChangeHook`.
+5. Run the *report interpreter* for the step, if one is configured (section 4a). It is a pure
+   function of `(state, completion)` that returns `WorkflowChange`s (for example `SKIP_FROM`),
+   a verdict and reasons. It is the successor of `WorkflowChangeHook`.
 6. `WorkflowEngine.evaluate(...)` produces the `WorkflowDecision`.
 7. Persist the status changes, outputs and report rows, and write an outbox row for each `DISPATCH`.
-8. Commit, then ack the message. postal's `MessageConsumer` acks after the callback returns and
+8. Finish with the optimistic version check: `UPDATE workflow_execution … SET version =
+   version + 1 WHERE id = ? AND version = ?`. If no row changed, another transaction decided on
+   the same workflow in the meantime: roll back.
+9. Commit, then ack the message. postal's `MessageConsumer` acks after the callback returns and
    nacks without requeue on exception, so a synchronous transactional callback gives
    ack-after-commit.
+
+**Decided: optimistic concurrency** (implemented in round 3, `CommandService`/`DecisionApplier`).
+
+- Every decision reads the *whole* workflow, then decides. Example: parallel steps B and C finish
+  together and both see the other as done, so both would dispatch the join step D. Decisions on
+  the same workflow must therefore be serialized.
+- The version on the aggregate root does this without holding locks. On conflict, and also on a
+  unique-key violation (for example two concurrent STARTs for the same subject), the handling is
+  re-run from a fresh read, at most 3 times. After that the exception reaches the listener, and the
+  message is nacked to the dead-letter queue (round 4).
+- The primary key `(workflow_execution_id, step_type, attempt_no)` on `step_attempt` is a second
+  safety net against double dispatch.
+- Most rows are effectively immutable: commands, attempts and outbox rows are inserted and updated
+  at most once. Only the current status on the execution and step rows changes in place.
 
 What this replaces:
 
@@ -261,6 +370,39 @@ A worker never knows which step produced its input; the orchestrator resolves in
 dependency outputs. **Open:** how named outputs map to inputs at a DAG join. Proposal: explicit
 per-step input mapping in config, only when the first real join appears.
 
+### 4a. Steps report facts, the orchestrator decides (Decided)
+
+- **A step ends in one of two ways.** `SUCCEEDED`: it ran, and here are its reports and outputs.
+  `FAILED`: it could not run (exception, infrastructure), with a diagnostic. Whether the *data* is
+  acceptable is never the step's call, so there is no `REJECTED` outcome.
+- **Report interpreters.** A small adapter in the orchestrator, chosen by domain and step type,
+  reads only the report fields it needs and turns them into decisions. Steps without an
+  interpreter just continue. The same report can mean different things in different workflows,
+  and that knowledge stays in the orchestrator. Examples:
+
+  | Domain | Step | Report says | Decision |
+  |---|---|---|---|
+  | VALIDATION | DwC-DP analysis | `valid=false` | Skip the remaining steps; workflow ends rejected. |
+  | INGESTION | DwC-DP analysis | `valid=false` | Metasync still runs (it does extra work); staging and everything after it is skipped; workflow ends rejected. |
+  | INGESTION | Crawl download | `modified=false` | Skip everything after the download; workflow ends `FINISHED`, not rejected. |
+
+- **The trail.** The report that drove a decision is stored in the same transaction as the
+  decision, and the decision's reason is stored on the rows (section 5). Every skip or rejection
+  can be traced to a stored report.
+- **Unreadable reports.** If an interpreter cannot read the report it needs (missing field, wrong
+  shape), the completion is handled as a step failure with the parse error as the diagnostic. A
+  bad report is never read as "continue".
+- **Engine change: `SKIP_FROM(step)`.** Today `SKIP` marks one pending step `SKIPPED`, and the
+  `NON_ERROR` join treats `SKIPPED` as fine, so the steps after it would still run. Interpreters
+  need "skip this step and everything that depends on it".
+- **Business errors are not technical errors.** A rejection is a verdict on the data, not a
+  failure: the workflow ends **`FINISHED` with verdict `REJECTED`** and a reason. `FAILED` is kept
+  for technical errors only, so alerts on `FAILED` mean real breakage.
+- **Timing.** The `Outcome` change, the verdict and reason on `WorkflowFinished` and the `reason`
+  and `rejected` columns are in place since round 4 (`DecisionNotes` carries them into a decision;
+  failures already fill them). The interpreter framework, `SKIP_FROM` and the DwC-DP analysis and
+  identifier interpreters are implemented in round 5 (`app.interpret`).
+
 ## 5. Persistence
 
 **Decided:** DDL in registry's Liquibase changelog, in registry's schema (section 2); the
@@ -297,7 +439,8 @@ uses one row per step, updated in place.
 
 - `workflow_execution`: one row per execution, with overall status and timestamps.
 - `step_execution`: one row per step, with current status and current attempt number. Updated in
-  place by a single-row `UPDATE` under the workflow row lock (section 3).
+  place by a single-row `UPDATE`, in the same transaction as the optimistic version check on the
+  workflow (section 3).
 - `step_attempt`: one row per try, with dispatched/finished, outcome, diagnostic message (today's
   `error`) and outputs. This is the history.
 
@@ -307,46 +450,132 @@ read-modify-write a document, and registry reads status with plain `SELECT`s. Vo
 
 ### Tables
 
-Proposed tables (registry schema):
+**Decided and implemented in rounds 3 and 4:** registry changeset `189-orchestrator-tables`. The SQL is
+in `registry-persistence/src/main/resources/liquibase/189-orchestrator-tables.sql`, and the
+orchestrator's H2 test schema is a verbatim copy of it. There is no table prefix.
 
-| Table | Purpose |
+- **`domain` is only on the aggregate root `workflow_execution`.** The other tables reach it
+  through their foreign keys.
+- **One domain per instance.** Each orchestrator instance is configured with one domain
+  (`orchestrator.domain`) and only processes its own executions.
+- **Command domain.** `workflow_command.domain` is just the value the command carried: a START has
+  no execution yet, or never gets one if it is rejected.
+
+| Table | Content |
 |---|---|
-| `workflow_execution` | id, domain (validation/ingestion), subject key (dataset uuid), external attempt, definition id/hash, status, timestamps, `version`. |
-| `step_execution` | One row per (workflow execution, step type): current status, current attempt number. |
-| `step_attempt` | Unique `(workflow_execution_id, step_type, attempt_no)`: status, dispatched/finished timestamps, outcome, diagnostic message, outputs (JSON stored as text). |
-| `outbox_message` | id, exchange, routing key, payload, headers, created, published_at, attempts, last_error. |
-| `workflow_command` | Unique `command_id`, type, subject, target step, requested_by, reason, received, outcome (`ACCEPTED`/`REJECTED`), outcome reason. |
-| `processed_message` | Optional deduplication by message id (if workers supply one). |
-| `validation_report` | Reused from **validator-ws** (see below), not registry's changeset 185 version. |
+| `workflow_execution` | `id`, `domain`, `dataset_key`, `attempt`, `run` (1 for START, +1 per RESTART), `workflow_name`, `definition_hash`, `parameters` (JSON text), `status`, `version`, `created`/`modified`/`finished`, `rejected` (verdict, only with `FINISHED`), `reason`. Unique `(domain, dataset_key, attempt, run)`. |
+| `step_execution` | PK `(workflow_execution_id, step_type)`: `step_order` (topological), `status`, `current_attempt`, `modified`, `reason`. |
+| `step_attempt` | PK `(workflow_execution_id, step_type, attempt_no)`: `status`, `outcome`, `diagnostic`, `outputs` (JSON text), `created` (dispatched), `started` (worker), `finished`. |
+| `workflow_command` | PK `command_id`: `command_type`, `domain`, `dataset_key`, `attempt`, `step_type`, `parameters`, `requested_by`, `reason`, `requested`, `received`, `workflow_execution_id` (nullable), `outcome` (`ACCEPTED`/`REJECTED`), `outcome_reason`. |
+| `outbox_message` | See *Outbox* below. |
+| `workflow_report` | PK `(dataset_key, attempt, report_type)`: `report` (**jsonb**), `comment`, `created`, `modified`. No foreign key. See *Reports* below. |
 
-### Reports (Decided: reuse the validator-ws design)
+**Decided (round 4): reasons are stored.** A nullable `reason` on `step_execution` (why a step
+failed, was skipped or aborted; for a failed step the worker's diagnostic, for aborted steps for
+example "Not run: VALIDATOR_VALIDATE_DWCDP failed") and on `workflow_execution` (why it ended, for
+example "VALIDATOR_VALIDATE_DWCDP failed: Archive not found"), plus the verdict `rejected`. They are
+meant for people, including a future frontend, and are copied into `WorkflowFinished`. Changeset
+189 had not been applied anywhere, so it was edited in place.
 
-The validator-ws table (`pipelines-validator-ws/.../liquibase/003-validation-report.xml`) is the
-model to keep:
+The SQL is portable: no enums or partial indexes; identity columns; `timestamp with time zone`.
+Step types and statuses are `varchar`, so a new `StepType` needs no `ALTER TYPE`. JSON is `text`
+except `workflow_report.report`, which is `jsonb` (see *Reports*).
+
+### Outbox
+
+An outbox row is "a message we have decided to send". It is written in the same transaction as
+the state change that needs it.
+
+| Column | Meaning |
+|---|---|
+| `id` | Identity; publishing happens in id order. |
+| `message_id` | UUID, unique. Sent as the AMQP message id so receivers can drop duplicates. |
+| `workflow_execution_id` | Required FK. The relay joins on it to filter by domain; also used for tracing. |
+| `step_type`, `step_attempt` | The dispatched step attempt (null for workflow-level events). |
+| `exchange`, `routing_key` | From configuration (`orchestrator.steps.<StepType>.request`). |
+| `payload` | JSON, built inside the transaction: a step request (`{"header": StepHeader}` until the per-step requests of round 5), or a `WorkflowFinished` event. |
+| `created`, `published` | `published` stays null until the broker confirms. |
+| `publish_attempts`, `last_error`, `next_attempt` | Publish failures. The relay retries after `next_attempt` (exponential backoff 1s, 2s, 4s… up to `orchestrator.relay.max-backoff`). |
+
+Lifecycle:
+
+1. The decision transaction writes state and outbox rows, then commits.
+2. The relay (`OutboxRelay`, one thread per instance) picks due unpublished rows of its domain in
+   id order, every `poll-interval` and right after a committing transaction that wrote outbox
+   rows. It publishes each with confirms and `mandatory=true` and sets `published` once the broker
+   confirmed. A failed row gets `next_attempt`; the rows after it still go out.
+3. Metrics: `orchestrator.outbox.unpublished`, `orchestrator.outbox.oldest.unpublished.age.seconds`
+   and `orchestrator.outbox.publish.failures`.
+
+Guarantees:
+
+- No message is sent for state that rolled back.
+- No committed decision is left unsent.
+- The worst case is a duplicate send, after a crash between the publish and setting `published`.
+  Receivers deduplicate using `message_id` or `stepAttempt`.
+
+**Decided:** published rows are kept indefinitely. Even millions of rows is a small table; a cleanup job can be added later if needed.
+
+### Schema changes to apply by hand
+
+Registry's Liquibase files document the SQL; each environment is changed by hand. In order:
+
+| Changeset | File | Notes |
+|---|---|---|
+| 189 | `liquibase/189-orchestrator-tables.sql` | Creates the six tables (including `workflow_report`). Run as the role that should own them. |
+| 190 | `liquibase/190-grant-orchestrator-tables.xml` | Grants: write for the orchestrator role, `SELECT` for registry. The role names are placeholders, so confirm them first. |
+
+Later, not part of Phase A: Phase B copies validator-ws `validation_report` rows into
+`workflow_report` (`validation_key` → `dataset_key`) when validator-ws merges into registry. Phase C
+migrates registry 185 rows as `DWCDP_ANALYSIS`, points `DatasetValidationResource` at
+`workflow_report`, and drops 185/188 once the analyser no longer PUTs there.
+
+### Reports: `workflow_report` (Decided, implemented in round 4)
+
+One table for both domains, modelled on the validator-ws `validation_report`
+(`pipelines-validator-ws/.../liquibase/003-validation-report.xml`):
 
 ```sql
-validation_key uuid, attempt integer, report_type varchar(255), report text,
-comment text NULL,   -- added (Decided)
+dataset_key uuid, attempt integer, report_type varchar(64), report jsonb, comment text NULL,
 created timestamptz, modified timestamptz,
-PRIMARY KEY (validation_key, attempt, report_type)
+PRIMARY KEY (dataset_key, attempt, report_type)
 ```
 
-- **`comment`** is free text and nullable. By convention the orchestrator writes the producing step
-  and attempt there (for example `VALIDATOR_VALIDATE_DWCDP attempt 2`), but anything is allowed. It
-  is for people, not for queries.
+- **Name `workflow_report`.** The key has no step, and `SUMMARY` comes from the orchestrator, not
+  from a step; the table also holds ingestion reports (for example `INTERPRETATION_METRICS`).
+- **`dataset_key`** is the dataset key, or the validation key for validations. Validator-ws already
+  uses the validation key as `datasetUuid` in messages, so both domains share the
+  `(uuid, attempt)` subject, which is also the subject of `workflow_execution`.
+- **No foreign key.** A foreign key to `validation` would break ingestion reports, and one to
+  `workflow_execution` does not fit its `run` column; reports outlive a run. The shared key format
+  is the link. Cleanup (for example validator-ws's retention task) deletes reports explicitly.
+- **`report` is `jsonb`**, as in registry's changeset 185, so reports can be queried in SQL. H2
+  accepts the type, so the test schema stays a verbatim copy; only the bind expression differs
+  (`JsonSql`: `CAST(:p AS jsonb)` in production, `:p FORMAT JSON` in tests).
+- **`comment`** is free text and nullable. When a report carries no comment the orchestrator writes
+  the producing step and attempt (for example `VALIDATOR_VALIDATE_DWCDP attempt 2`). It is for
+  people, not for queries.
+- **Several reports per attempt**, one per `report_type`, for example `DWCDP_ANALYSIS`, the
+  "general" DwC-A report (today inside the `validation` table), and reports of other formats.
+- **Reports are decoupled from executions and attempts**: new report kinds need no schema change.
+- **Writes are upserts** (update, then insert; portable to H2), keeping `created`. Repeated
+  completion processing is safe; a concurrent insert of the same key is retried.
+- Only the orchestrator writes the table; registry reads it (changeset 190).
 
-- **Several reports per attempt**, one per `report_type`. For example:
-  - `DWCDP_ANALYSIS`, from the DwC-DP analyser.
-  - The "general" report for the DwC-A translation, including checklist/taxonomy lookups. Today
-    this is stored inside the `validation` table; it should move to its own report type.
-  - Reports for other formats (ColDP, ABCD, …), which may use the `validation` table in similar
-    ad-hoc ways today.
-- **Reports are decoupled from executions and attempts.** A report is its own row keyed by
-  subject, attempt and type. It is not a column of the execution or validation row, so new report
-  kinds need no schema change and leave no unused columns behind.
-- `report` is `text` (the JSON is parsed in Java), which also suits the H2 tests.
-- Writes are upserts on the key (as today's `createOrUpdateValidationReport`), so repeated
-  completion processing is safe.
+**Existing report tables (kept, migrated later).** Registry's changeset 185 `validation_report`
+(one `jsonb` report per dataset and attempt, PUT over HTTP by dwc-dp-analyser-service) stays
+untouched while the analyser still writes it. Phase C migrates its rows as `DWCDP_ANALYSIS`,
+switches gbif-api `DatasetValidationService` / `DatasetValidationResource` to `workflow_report`
+(`get`/`getLatest` filter on `DWCDP_ANALYSIS`, plus a typed `get`), and drops 185/188. Phase B
+copies validator-ws `validation_report` rows over when validator-ws merges into registry.
+
+| | registry (185) | validator-ws (003) | `workflow_report` |
+|---|---|---|---|
+| Key | `(dataset_key, attempt)` | `(validation_key, attempt, report_type)` | `(dataset_key, attempt, report_type)` |
+| Report column | `jsonb` | `text` | `jsonb` |
+| Timestamps | `created` without time zone; the upsert resets it | `created`, `modified` with time zone | `created` (kept), `modified`, with time zone |
+| Foreign key | none | `validation(key)`, `ON DELETE CASCADE` | none |
+| Writer | dwc-dp-analyser (HTTP PUT) | pipelines workers via validator-ws | the orchestrator |
 
 ### Report inventory (verified against the code; type names Proposed)
 
@@ -400,52 +629,78 @@ The orchestrator's own tables should not repeat that pattern.
   to the status tables and reports. Decide then whether a temporary compatibility projection into
   `validation` is needed during the switch.
 
-Workflow definitions stay in application configuration. Each execution records the definition id
-and hash it started with, so a configuration change does not reinterpret running workflows.
+Workflow definitions stay in application configuration (`orchestrator.workflows.<name>`: `domain`,
+`match`, `parallel`, `default-join-policy` and `nodes` as a list of `{step, dependencies,
+join-policy}`). START selects the single definition whose `match` entries all equal the command
+parameters; no match or several matches means the command is rejected. Each execution records the
+definition name and a SHA-256 hash of its canonical form, so a configuration change is visible
+and does not silently reinterpret running workflows. Invalid definitions (cycles, unknown
+dependencies, identical matches, steps without request routing) stop the application at startup.
 
-## 6. RabbitMQ messaging
+## 6. RabbitMQ messaging (Decided, implemented in round 4)
 
-**Proposed**
+**Transport: postal-service, extended.** postal could not publish with confirms or `mandatory`,
+and declared queues without arguments, so it could not set up dead-lettering. Round 4 adds
+builder-style configuration to postal (2.1.16-SNAPSHOT; the orchestrator release needs a postal
+release). Everything is additive, existing constructors and callers are unchanged:
 
-- Keep **one completion queue per step** (current behaviour, `StepCompletionListenerConfiguration`),
-  with routing in configuration.
-- **Outbox relay:** a scheduled poller (a single relay thread per instance) picks unpublished
-  rows, publishes them, waits for the broker confirm, and marks them published. Correctness must
-  not depend on `FOR UPDATE SKIP LOCKED`: with several instances the worst case is a duplicate
-  publish, which consumers tolerate anyway. `SKIP LOCKED` may be used on Postgres only as an
-  optimisation, because H2 tests cannot verify its semantics (section 8). A crash between publish
-  and mark gives a duplicate publish, not a lost one. Workers and the orchestrator must tolerate
-  duplicates, which the attempt check in section 3 handles.
-- Dead-letter exchanges for orchestrator queues, so nacked messages are kept and visible.
+- `DefaultMessagePublisher.builder(params)`: `.registry`, `.mapper`,
+  `.declareRegisteredExchanges(bool)` (default true, as before), `.declareExchangeOnSend(bool)`,
+  `.publisherConfirms(timeout)` (every send waits for the confirm; a nack or timeout throws) and
+  `.mandatory(bool)` (requires confirms; a returned message throws `UnroutableMessageException` and
+  is not retried).
+- `send(message, exchange, routingKey, SendOptions)` with per-message `persistent`, `messageId`,
+  `contentType` and `headers`. A `default` method on `MessagePublisher`, so other implementations
+  (pipelines' test stubs) keep compiling.
+- `MessageListener.builder(params)` and `listen(QueueBinding, callback)`. `QueueBinding` holds the
+  queue, exchange, routing key, threads, queue arguments and `.deadLetter(dlx)`, which declares
+  the queue with `x-dead-letter-exchange`/`x-dead-letter-routing-key=<queue>`, the durable topic
+  DLX, and the durable `<queue>.dlq` bound with the queue name.
+
+**Topology** (names per instance, from `ORCHESTRATOR_MESSAGING_PREFIX`, for example `validation`):
+
+| What | Exchange | Routing key | Queue |
+|---|---|---|---|
+| Commands (registry → orchestrator) | `orchestrator` | `<prefix>.command` | `orchestrator.<prefix>.commands` (+ `.dlq`) |
+| Step completions, all steps (workers → orchestrator) | `orchestrator` | `<prefix>.step.completed` | `orchestrator.<prefix>.step.completed` (+ `.dlq`) |
+| DwC-DP analyser completions (legacy, optional) | `orchestrator` | `<prefix>.dwcdp.analysis.finished` | `orchestrator.<prefix>.dwcdp.analysis.finished` (+ `.dlq`) |
+| `WorkflowFinished` (orchestrator → registry) | `orchestrator` | `<prefix>.workflow.finished` | declared by the consumer |
+| Step requests (orchestrator → workers) | `orchestrator.steps.<StepType>.request` | | declared by the worker |
+| Dead letters | `orchestrator.dlx` | the queue name | `<queue>.dlq` |
+
+- **One completion queue per domain.** The `StepCompleted` envelope carries the step type in its
+  header, so adding a step needs no queue. The analyser's legacy `DwcDpValidationFinished` has
+  its own adapter queue (round 5), until the analyser adopts the envelope.
+- **Owner declares.** The orchestrator declares its own queues, bindings and DLQs, and declares
+  (idempotently, durable topic) every exchange it publishes to. Workers declare their queues.
+- **Unroutable is a failure.** The relay publishes with `mandatory=true`, so a request sent before
+  the worker's queue exists is returned and retried with backoff instead of being dropped silently.
+- **Ack after commit.** postal acks after the callback returns and nacks without requeue when it
+  throws; a message it cannot deserialize (including contract validation errors) is rejected.
+  With the DLX, both end in the DLQ, visible and replayable by hand. Duplicate commands, rejected
+  commands and stale completions are acked normally (their outcome is stored or logged).
+- **Known limitation.** A transient database outage makes handling throw, so those messages are
+  dead-lettered rather than retried later. Replaying the DLQ is manual for now; a delayed-retry
+  queue can be added if this happens in practice.
+- **Outbox relay:** see *Outbox* in section 5. Correctness does not depend on
+  `FOR UPDATE SKIP LOCKED`: with several instances of one domain the worst case is a duplicate
+  publish, which receivers tolerate (`message_id`, `stepAttempt`).
+- **Messaging off:** `orchestrator.messaging.enabled=false` starts without RabbitMQ (used by the
+  tests); state handling and outbox rows work the same, nothing is published.
 
 **Postal facts (verified)**
 
 - `@MessageBinding` and the `Message` interface only feed postal's convenience overloads:
   `send(Message)`, and `listen(...)` without an exchange or routing key. `DefaultMessageRegistry`
   scans only postal's own `org.gbif.common.messaging.api.messages` package.
-- The explicit `listen(queue, routingKey, exchange, threads, MessageCallback<T>)` takes any
-  type. It declares the durable topic exchange, the durable queue and the binding itself.
-  `send(Object, exchange, routingKey)` also takes any object.
-- The annotations' only infrastructure effect: the publisher declares the exchanges of all
-  annotated classes at startup.
-
-**Decided:** new contracts are plain records without postal annotations. Topology is owned by
-configuration on the side that uses it:
-
-- The listener declares its queue and binding.
-- The publisher declares, idempotently, the exchange it sends to.
-- The outbox relay publishes with `mandatory=true` and treats a returned (unroutable) message as a
-  publish failure. postal does not, so a message sent before the worker's queue exists would
-  otherwise be dropped silently.
+- The explicit `listen(...)` variants take any type and declare the durable topic exchange, the
+  durable queue and the binding themselves. `send(Object, exchange, routingKey)` takes any object.
+- New contracts are plain records without postal annotations.
 
 **Open**
 
-- postal's `DefaultMessagePublisher` never enables publisher confirms (`confirmSelect`). It only
-  calls `waitForConfirmsOrDie` on close. The relay therefore needs either a postal change or a
-  small publisher on the RabbitMQ client using the same `ConnectionParameters`.
-- Validation and ingestion isolation: separate vhosts, or a shared vhost with prefixed exchanges.
-  Proposal: one codebase, one deployment per domain, each configured with its own vhost or prefix.
-  The engine is unaffected either way.
+- Validation and ingestion isolation: separate vhosts, or one vhost with the prefixes above. The
+  prefixes make a shared vhost possible; the deployment decides.
 
 ## 6a. Message contracts: `flow-orchestrator-api` (Decided)
 
@@ -479,7 +734,7 @@ Plain records, serialized with Jackson, carrying no exchange or routing key. Imp
   - attempts ≥ 1;
   - a diagnostic when the outcome is not `SUCCEEDED`;
   - no duplicate report types;
-  - `rejected` only with `FAILED`.
+  - `rejected` only with `FINISHED` (a business rejection is not a failure, section 4a).
 - **Golden fixtures.** The JSON in `flow-orchestrator-api/src/test/resources/contracts/` locks the
   wire format. Change a fixture only together with a deliberate contract change.
 
@@ -488,10 +743,10 @@ Plain records, serialized with Jackson, carrying no exchange or routing key. Imp
 record StepCompleted(
     UUID messageId,                 // deduplication key for redelivery
     StepHeader header,              // copied back unchanged from the request
-    Outcome outcome,                // SUCCEEDED | FAILED | REJECTED
-    String diagnostic,              // reason for FAILED/REJECTED; becomes the step_attempt diagnostic
+    Outcome outcome,                // SUCCEEDED | FAILED
+    String diagnostic,              // reason for FAILED; becomes the step_attempt diagnostic
     Map<String, String> outputs,    // small machine values for later steps
-    List<Report> reports,           // human-facing results; one validation_report row each
+    List<Report> reports,           // human-facing results; one workflow_report row each
     Instant startedAt, Instant finishedAt) {}
 
 // orchestrator → worker: included in every step request, echoed back by the worker
@@ -506,21 +761,17 @@ record Report(
     JsonNode content,               // raw JSON, not an escaped string
     String comment) {}              // optional; the orchestrator fills "<StepType> attempt <n>" when null
 
-enum Outcome { SUCCEEDED, FAILED, REJECTED }
+enum Outcome { SUCCEEDED, FAILED }
 ```
 
 - **`outcome`** describes what happened to the work, not what should run next.
   - `SUCCEEDED`: the step finishes.
   - `FAILED`: the worker broke (exception, infrastructure problem). This is the retryable case.
-  - `REJECTED`: the worker ran correctly but the data is invalid. Examples: the analyser's
-    `valid=false`, or the identifier duplicate threshold being exceeded.
-
-  `FAILED` and `REJECTED` both make the step `FAILED` and stop the workflow. The attempt keeps
-  the distinction, so the UI can say "data invalid" versus "processing error", and retrying a
-  `REJECTED` attempt can be refused.
-- **`outputs`** are for machines: small named values (HDFS paths, counts, flags such as
-  `hasOccurrences`/`hasEvents`). They are stored on `step_attempt.outputs` and resolved into later
-  requests (section 4).
+  - There is no `REJECTED` (removed in round 4, section 4a). Invalid data is a `SUCCEEDED` step whose
+    report the orchestrator interprets; the workflow then ends `FINISHED` with verdict `REJECTED`.
+- **`outputs`** are for machines: small named values (HDFS paths, counts). They are stored on
+  `step_attempt.outputs` and resolved into later requests (section 4). Data-shape flags such as
+  `hasOccurrences`/`hasEvents` are not passed between steps any more (section 9a).
 - **`reports`** are for people. They form a list of objects because each element is a table row,
   and fields can be added later. A completion that contains a duplicate `type` is rejected.
   Content travels inline: the same data already went over HTTP as one `Validation` PUT, and it is
@@ -534,8 +785,8 @@ enum Outcome { SUCCEEDED, FAILED, REJECTED }
   new request (used by validation). Once Phase C is done, the postal pipeline message classes can
   be retired.
 - **Legacy adapter:** the DwC-DP analyser keeps `DwcDpValidationFinished` during Phase A. A
-  per-step adapter maps it to `StepCompleted` (analysis report as `DWCDP_ANALYSIS`;
-  `valid=false` → `REJECTED`).
+  per-step adapter maps it to `StepCompleted` (`SUCCEEDED`, analysis report as `DWCDP_ANALYSIS`).
+  The analysis interpreter then reads `valid` from the report (section 4a).
 
 Target message flow, using the DwC-DP slice as the example. Every worker only replies; the
 orchestrator dispatches the next step. Today each worker sends the next step's message itself,
@@ -572,7 +823,7 @@ or registry for workflow purposes.
 - **Rerun from X:** X and its transitive downstream steps get new attempts and return to
   `PENDING`. Completed steps elsewhere (parallel branches not downstream of X) are reused.
 - **Restart:** a new `workflow_execution`.
-- Concurrent commands are serialized by the row lock. A command that conflicts with the current
+- Concurrent commands are serialized by the optimistic version check (section 3). A command that conflicts with the current
   state (for example retrying a running step) is rejected and logged.
 - A completion for an attempt that is not current is acked and ignored.
 - **Lost work:** a scanner flags step attempts that have been dispatched for longer than a per-step
@@ -602,7 +853,7 @@ Caveats and how the design handles them:
 |---|---|
 | No Postgres `jsonb` type or operators | Map JSON columns as text or H2 `JSON` in the test schema. Orchestrator queries never use jsonb operators; JSON is parsed in Java. |
 | `FOR UPDATE SKIP LOCKED` semantics differ | Outbox correctness does not depend on it (section 6). |
-| Row-lock behaviour under real concurrency | Single-instance correctness is covered with H2 `FOR UPDATE`. Multi-instance behaviour is checked in Compose. |
+| Concurrency under real load | The optimistic version check behaves the same on H2, and conflict handling is tested with a repository that forces a conflict. Real multi-instance behaviour is checked in Compose. |
 | Registry changesets are Postgres SQL | Keep orchestrator changesets portable, and keep the H2 mirror alongside. |
 
 ## 9. Validation workflows today (verified inventory, pipelines `feature/dwcdp-data-validator`)
@@ -662,3 +913,40 @@ What Phase B removes or replaces:
     PUT, and the reverse.
   - The `@Value` keys for validator-ws's DwC-DP start message may not match its YAML. Check the
     deployed config.
+
+## 9a. Crawl and ingestion through the orchestrator (Phase C, direction agreed)
+
+Today's DwC-DP crawl → ingest chain (routing keys on the `crawler` exchange), confirmed by the
+user:
+
+```text
+crawl.start → crawl.request → [crawler downloads]
+  → crawl.dwcdp.download.finished          (modified, lastModified)   stops here if not modified
+  → [analyser] PUT registry validation_report
+  → crawl.dwcdp.validation.finished         (valid)
+  → [crawler metasync]                      runs even when invalid (does extra work)
+  → crawl.dwcdp.metadatasync.finished       (containsOccurrences, containsEvents)  stops if invalid
+  → pipelines balancer picks the pipeline from the two flags → occurrence.dwcdp.stage → …
+```
+
+Direction:
+
+- **Crawl steps become steps.** Download, DwC-DP analysis and metasync are not in gbif-api's
+  `StepType` today, because crawling was its own flow that then started ingestion. They are added
+  to `StepType` (ties in with section 1a).
+- **The analyser becomes a plain worker**, with the same encapsulation as in validation: it gets a
+  step request, replies with `StepCompleted` and the `DWCDP_ANALYSIS` report. It no longer writes
+  to registry, sends crawler messages or writes ingest status. The same analyser serves both
+  domains; each orchestrator instance routes the step to its own queue.
+- **Stop conditions are report interpretations** (section 4a): `modified=false` in the download
+  report skips the rest; `valid=false` in the analysis report lets metasync run and skips staging
+  onward. Metasync receives the analysis result in its request, built by the orchestrator.
+- **No `containsOccurrences`/`containsEvents` flags.** Each step checks its own input (for example
+  `datapackage.json` or the staged schema) and, when it has nothing to do, returns `SUCCEEDED`
+  with a comment. This gives **one fixed DAG** from crawl through ingestion, with no branch chosen
+  mid-flow, and removes today's job failures caused by wrong flags. A step must check before it
+  launches anything expensive (Spark, Airflow).
+
+**Open:** what registry and other readers use for crawl and ingest status today (crawl history,
+pipeline process and execution rows, ZooKeeper), and whether any of it must keep being written
+for compatibility. Needs the crawler repository.

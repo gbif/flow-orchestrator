@@ -1,0 +1,52 @@
+# Local-test configuration, loaded with the "local" profile on top of the packaged application.yml.
+orchestrator:
+  workflows:
+    # The full DwC-DP validation chain. Without pipelines, run the pipelines steps by hand with
+    # "task complete" (see USAGE.md).
+    validation-dwcdp:
+      domain: VALIDATION
+      match:
+        fileFormat: DWCDP
+        chain: full
+      nodes:
+        - step: VALIDATOR_VALIDATE_DWCDP
+        - step: VALIDATOR_DWCDP_STAGE
+          dependencies: [VALIDATOR_VALIDATE_DWCDP]
+        - step: VALIDATOR_DWCDP_TO_VERBATIM
+          dependencies: [VALIDATOR_DWCDP_STAGE]
+        - step: VALIDATOR_VERBATIM_TO_IDENTIFIER
+          dependencies: [VALIDATOR_DWCDP_TO_VERBATIM]
+        - step: VALIDATOR_VERBATIM_TO_INTERPRETED
+          dependencies: [VALIDATOR_VERBATIM_TO_IDENTIFIER]
+        - step: VALIDATOR_COLLECT_METRICS
+          dependencies: [VALIDATOR_VERBATIM_TO_INTERPRETED]
+    # Only the analysis, against the real analyser.
+    validation-dwcdp-analysis:
+      domain: VALIDATION
+      match:
+        fileFormat: DWCDP
+        chain: analysis
+      nodes:
+        - step: VALIDATOR_VALIDATE_DWCDP
+
+  steps:
+    VALIDATOR_VALIDATE_DWCDP:
+      request: { exchange: orchestrator, routing-key: validation.dwcdp.analysis }
+    # The pipelines jobs go through the balancer, as in production.
+    VALIDATOR_DWCDP_STAGE:
+      request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+    VALIDATOR_DWCDP_TO_VERBATIM:
+      request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+    VALIDATOR_VERBATIM_TO_IDENTIFIER:
+      request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+    VALIDATOR_VERBATIM_TO_INTERPRETED:
+      request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+    VALIDATOR_COLLECT_METRICS:
+      request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+
+  relay:
+    max-backoff: 30s
+
+logging:
+  level:
+    org.gbif.orchestrator: DEBUG

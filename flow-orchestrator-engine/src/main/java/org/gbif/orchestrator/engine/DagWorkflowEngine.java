@@ -82,16 +82,22 @@ public final class DagWorkflowEngine implements WorkflowEngine {
     }
 
     for (WorkflowChange change : changes) {
-      Status previous = statuses.get(change.step());
-
-      if (previous != Status.PENDING) {
-        throw new IllegalArgumentException(
-            "Cannot change an active or terminal step: " + change.step());
+      List<StepType> targets = new ArrayList<>();
+      targets.add(change.step());
+      if (change.kind() == WorkflowChange.Kind.SKIP_FROM) {
+        targets.addAll(definition.downstreamOf(change.step()));
       }
 
-      if (change.kind() == WorkflowChange.Kind.SKIP) {
-        statuses.put(change.step(), Status.SKIPPED);
-        actions.add(Action.stepStatus(change.step(), Status.SKIPPED));
+      for (StepType target : targets) {
+        Status previous = statuses.get(target);
+        if (previous == Status.SKIPPED && change.kind() == WorkflowChange.Kind.SKIP_FROM) {
+          continue; // overlapping SKIP_FROM ranges
+        }
+        if (previous != Status.PENDING) {
+          throw new IllegalArgumentException("Cannot change an active or terminal step: " + target);
+        }
+        statuses.put(target, Status.SKIPPED);
+        actions.add(Action.stepStatus(target, Status.SKIPPED));
       }
     }
 

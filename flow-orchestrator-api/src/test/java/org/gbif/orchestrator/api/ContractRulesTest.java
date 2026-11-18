@@ -112,9 +112,9 @@ class ContractRulesTest {
   }
 
   @Test
-  void failureOutcomesRequireDiagnostic() {
+  void failedOutcomeRequiresDiagnostic() {
     assertThrows(IllegalArgumentException.class, () -> completed(Outcome.FAILED, null, List.of()));
-    assertThrows(IllegalArgumentException.class, () -> completed(Outcome.REJECTED, " ", List.of()));
+    assertThrows(IllegalArgumentException.class, () -> completed(Outcome.FAILED, " ", List.of()));
   }
 
   @Test
@@ -148,19 +148,29 @@ class ContractRulesTest {
   }
 
   @Test
-  void rejectedOnlyForFailedWorkflows() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            new WorkflowFinished(
-                UUID.randomUUID(),
-                Domain.VALIDATION,
-                UUID.randomUUID(),
-                1,
-                WorkflowResult.FINISHED,
-                true,
-                null,
-                NOW));
+  void rejectedOnlyForFinishedWorkflows() {
+    // a rejection is a business outcome, not a technical failure
+    assertThrows(IllegalArgumentException.class, () -> finished(WorkflowResult.FAILED, true));
+    assertThrows(IllegalArgumentException.class, () -> finished(WorkflowResult.ABORTED, true));
+    assertTrue(finished(WorkflowResult.FINISHED, true).rejected());
+  }
+
+  @Test
+  void outcomeHasNoRejection() {
+    assertEquals(List.of(Outcome.SUCCEEDED, Outcome.FAILED), List.of(Outcome.values()));
+  }
+
+  private static WorkflowFinished finished(WorkflowResult result, boolean rejected) {
+    return new WorkflowFinished(
+        UUID.randomUUID(),
+        Domain.VALIDATION,
+        UUID.randomUUID(),
+        1,
+        result,
+        rejected,
+        "reason",
+        null,
+        NOW);
   }
 
   private static WorkflowCommand command(CommandType type, Domain domain, StepType step) {

@@ -13,7 +13,7 @@
  */
 package org.gbif.orchestrator.app;
 
-import org.gbif.orchestrator.app.config.DagProperties;
+import org.gbif.orchestrator.app.config.OrchestratorProperties;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -21,7 +21,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 
 /** Bootstrap for the workflow orchestrator service. */
 @SpringBootApplication
-@EnableConfigurationProperties(DagProperties.class)
+@EnableConfigurationProperties(OrchestratorProperties.class)
 public class Main {
   public static void main(String[] args) {
     SpringApplication.run(Main.class, args);

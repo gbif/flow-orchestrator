@@ -31,6 +31,12 @@ public final class ReportTypes {
   /** DwC-DP to verbatim conversion: compact, detailed and statistics reports. */
   public static final String DWCDP_CONVERSION = "DWCDP_CONVERSION";
 
+  /**
+   * Identifier checks: {@code totalRecords}, {@code absentIdentifierRecords}, {@code
+   * duplicateIdentifiers}, {@code isResultValid} and {@code validationMessage} (identifier step).
+   */
+  public static final String IDENTIFIERS = "IDENTIFIERS";
+
   /** Interpreted metrics: indexed counts, term counts, samples, issues, indexeable verdict. */
   public static final String INTERPRETATION_METRICS = "INTERPRETATION_METRICS";
 

@@ -7,11 +7,9 @@
     "stepType": "VALIDATOR_VALIDATE_DWCDP",
     "stepAttempt": 2
   },
-  "outcome": "REJECTED",
-  "diagnostic": "Invalid DwC-DP",
+  "outcome": "SUCCEEDED",
   "outputs": {
-    "hasOccurrences": "true",
-    "hasEvents": "false"
+    "datapackagePath": "/mnt/auto/crawler/dwcdp/673f2308-3501-474f-85d5-a832825bb46c/1"
   },
   "reports": [
     {
