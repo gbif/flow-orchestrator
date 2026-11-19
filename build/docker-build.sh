@@ -46,35 +46,46 @@ if [[ -z "${POM_VERSION//[[:space:]]/}" ]]; then
   exit 2
 fi
 
-IMAGE_NAME="flow-orchestrator"
-IMAGE="docker.gbif.org/${IMAGE_NAME}:${POM_VERSION}"
-IMAGE_LATEST="docker.gbif.org/${IMAGE_NAME}:latest"
 BASE_REGISTRY="docker.gbif.org/third-party"
 
-echo "Docker build configuration:"
-echo "  release:       ${IS_M2RELEASEBUILD}"
-echo "  version:       ${POM_VERSION}"
-echo "  image:         ${IMAGE}"
-echo "  base registry: ${BASE_REGISTRY}"
+# image name -> Maven module with its runnable JAR
+IMAGES=(
+  "flow-orchestrator:flow-orchestrator-app"
+  "flow-orchestrator-ws:flow-orchestrator-ws"
+)
 
-# docker-image.sh performs runner-JAR validation and then invokes docker build.
-# Any docker/build failure is intentionally not caught here, so Docker's
-# original error message and exit code remain visible in Jenkins.
-./build/docker-image.sh "${IMAGE}" "${BASE_REGISTRY}"
+for entry in "${IMAGES[@]}"; do
+  IMAGE_NAME="${entry%%:*}"
+  MODULE="${entry#*:}"
+  IMAGE="docker.gbif.org/${IMAGE_NAME}:${POM_VERSION}"
+  IMAGE_LATEST="docker.gbif.org/${IMAGE_NAME}:latest"
 
-echo "Pushing Docker image to the repository: ${IMAGE}"
-docker push "${IMAGE}"
+  echo "Docker build configuration:"
+  echo "  release:       ${IS_M2RELEASEBUILD}"
+  echo "  version:       ${POM_VERSION}"
+  echo "  module:        ${MODULE}"
+  echo "  image:         ${IMAGE}"
+  echo "  base registry: ${BASE_REGISTRY}"
 
-if [[ "${IS_M2RELEASEBUILD}" == "true" ]]; then
-  echo "Updating latest tag to point to ${IMAGE}"
-  docker tag "${IMAGE}" "${IMAGE_LATEST}"
-  docker push "${IMAGE_LATEST}"
-fi
+  # docker-image.sh performs runner-JAR validation and then invokes docker build.
+  # Any docker/build failure is intentionally not caught here, so Docker's
+  # original error message and exit code remain visible in Jenkins.
+  ./build/docker-image.sh "${IMAGE}" "${BASE_REGISTRY}" "${MODULE}"
 
-echo "Removing local Docker image: ${IMAGE}"
-docker rmi -f "${IMAGE}"
+  echo "Pushing Docker image to the repository: ${IMAGE}"
+  docker push "${IMAGE}"
 
-if [[ "${IS_M2RELEASEBUILD}" == "true" ]]; then
-  echo "Removing local Docker image with latest tag: ${IMAGE_LATEST}"
-  docker rmi -f "${IMAGE_LATEST}"
-fi
+  if [[ "${IS_M2RELEASEBUILD}" == "true" ]]; then
+    echo "Updating latest tag to point to ${IMAGE}"
+    docker tag "${IMAGE}" "${IMAGE_LATEST}"
+    docker push "${IMAGE_LATEST}"
+  fi
+
+  echo "Removing local Docker image: ${IMAGE}"
+  docker rmi -f "${IMAGE}"
+
+  if [[ "${IS_M2RELEASEBUILD}" == "true" ]]; then
+    echo "Removing local Docker image with latest tag: ${IMAGE_LATEST}"
+    docker rmi -f "${IMAGE_LATEST}"
+  fi
+done

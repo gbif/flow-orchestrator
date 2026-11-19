@@ -159,7 +159,7 @@ pipeline {
           echo "Docker build inputs:"
           echo "  release: ${releaseArg}"
           echo "  version: ${env.VERSION}"
-          echo "  image:   docker.gbif.org/flow-orchestrator:${env.VERSION}"
+          echo "  images:  docker.gbif.org/flow-orchestrator:${env.VERSION}, docker.gbif.org/flow-orchestrator-ws:${env.VERSION}"
 
           sh """
             set -e

@@ -66,6 +66,36 @@ class DagWorkflowEngineTest {
   }
 
   @Test
+  void cancelAbortsEveryUnfinishedStepAndTheWorkflow() {
+    WorkflowDecision result =
+        new DagWorkflowEngine(definition(true))
+            .evaluate(
+                state(Status.FINISHED, Status.RUNNING, Status.SKIPPED, Status.PENDING),
+                WorkflowEvent.cancel());
+
+    assertEquals(
+        List.of("SET_STEP_STATUS " + LEFT + " ABORTED", "SET_STEP_STATUS " + JOIN + " ABORTED",
+            "SET_WORKFLOW_STATUS null ABORTED"),
+        result.actions().stream().map(a -> a.kind() + " " + a.step() + " " + a.status()).toList());
+  }
+
+  @Test
+  void cancelOfAnEndedWorkflowDoesNothing() {
+    WorkflowState ended =
+        new WorkflowState(
+            Status.FINISHED,
+            List.of(
+                new Step(ROOT, 0, Status.FINISHED),
+                new Step(LEFT, 1, Status.FINISHED),
+                new Step(RIGHT, 2, Status.FINISHED),
+                new Step(JOIN, 3, Status.FINISHED)));
+
+    assertTrue(
+        new DagWorkflowEngine(definition(true)).evaluate(ended, WorkflowEvent.cancel()).actions()
+            .isEmpty());
+  }
+
+  @Test
   void sequentialDispatchesOnlyOneBranch() {
     WorkflowDecision result =
         new DagWorkflowEngine(definition(false))

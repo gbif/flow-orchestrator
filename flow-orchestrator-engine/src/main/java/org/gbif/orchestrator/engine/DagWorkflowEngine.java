@@ -64,6 +64,17 @@ public final class DagWorkflowEngine implements WorkflowEngine {
     }
 
     List<Action> actions = new ArrayList<>();
+    if (event.kind() == WorkflowEvent.Kind.CANCEL) {
+      if (!changes.isEmpty()) {
+        throw new IllegalArgumentException("Workflow changes require a successful completion");
+      }
+      state.steps().stream()
+          .sorted(Comparator.comparingInt(Step::order).thenComparing(s -> s.type().name()))
+          .filter(step -> !isTerminal(statuses.get(step.type())))
+          .forEach(step -> actions.add(Action.stepStatus(step.type(), Status.ABORTED)));
+      actions.add(Action.workflowStatus(Status.ABORTED));
+      return new WorkflowDecision(actions);
+    }
     if (event.kind() != WorkflowEvent.Kind.START) {
       Status current = statuses.get(event.step());
       if (current != Status.QUEUED && current != Status.RUNNING) {

@@ -1,0 +1,43 @@
+# Test overrides, loaded in addition to the main application.yml.
+spring:
+  datasource:
+    # INIT creates the schema that db/001 creates in PostgreSQL; connections use it (hikari.schema).
+    url: jdbc:h2:mem:orchestrator-ws-${random.uuid};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;NON_KEYWORDS=KEY;INIT=CREATE SCHEMA IF NOT EXISTS orchestrator
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      # The production scripts: the engine's tables (read for composition) and the validation tables.
+      schema-locations: classpath:db/002-orchestrator-tables.sql,classpath:db/003-validation-tables.sql
+  servlet:
+    multipart:
+      location: ${java.io.tmpdir}/flow-orchestrator-ws-test/work
+
+storePath: ${java.io.tmpdir}/flow-orchestrator-ws-test/store
+maxRunningValidationPerUser: 3
+
+gbif:
+  api:
+    url: http://localhost:1/
+  ws:
+    security:
+      appKey: test
+      appSecret: test
+
+clb:
+  api:
+    url: http://localhost:1/
+  cleaner:
+    cron: "-"
+    hoursOld: 24
+
+retentionPolicy:
+  cron: "-"
+  keepDays: 90
+
+orchestrator:
+  ws:
+    messaging:
+      # no broker in tests; see support.FakeMessages
+      enabled: false

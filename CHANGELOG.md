@@ -2,6 +2,23 @@
 
 ## 0.0.1 (unreleased)
 
+- Round A: new module `flow-orchestrator-ws`, the validation web service taken over from
+  pipelines-validator-ws (from the security-fixed branch `fix/validator-ownership-and-upload`).
+  Same `/validation` paths and JSON. DwC-DP validations start with a `WorkflowCommand`; their
+  status and metrics are composed from the workflow, and the email goes out on `WorkflowFinished`.
+  Other formats keep the legacy worker path until Round B. Data access is ported to `JdbcClient`.
+  Jobs (ChecklistBank poller, retention) run under ShedLock and handle every due row. EML
+  validation uses gbif-eml-validation. Emails are sent once, keep installations' notification
+  addresses, and also go out for failed submissions. A missing validation returns 404.
+- `CommandType.CANCEL`: ends a running workflow as `ABORTED`, including its dispatched attempts;
+  later completions are ignored.
+- Schema: `db/003` (validation tables and ShedLock) and `db/004` (grants for the ws role); the
+  scripts moved to `db/` at the repository root. Second Docker image `flow-orchestrator-ws`.
+- The tables move to their own schema `orchestrator` in the registry database, and their DDL moves
+  from registry (changesets 189/190, never applied, now removed) into this repository:
+  `db/` (`001` schema and grants, `002` tables), still
+  applied by hand. Connections use the schema as current schema (`DB_SCHEMA`, default
+  `orchestrator`); registry gets read-only access. The H2 tests run the production table script.
 - Multi-module repository: `flow-orchestrator-engine` and `flow-orchestrator-app`.
 - Ported the DAG workflow engine from pipelines `validator-orchestrator` (commit `dffcecb0b`).
   - Removed `SequentialWorkflowEngine`; use `DagDefinition.linear(...)`. On failure, downstream

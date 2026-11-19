@@ -65,7 +65,7 @@ public record WorkflowCommand(
       throw new IllegalArgumentException("attempt must be at least 1");
     }
     switch (type) {
-      case START -> Objects.requireNonNull(domain, "domain is required for START");
+      case START, CANCEL -> Objects.requireNonNull(domain, "domain is required for " + type);
       case RETRY_STEP, RERUN_FROM -> Objects.requireNonNull(step, "step is required for " + type);
       case RESTART -> {
         // No additional fields required.

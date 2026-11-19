@@ -1,12 +1,15 @@
 spring:
   application:
     name: flow-orchestrator
-  # Registry PostgreSQL database. The orchestrator tables are created by registry changesets
-  # (189-orchestrator-tables), applied by hand; the orchestrator runs no migrations.
+  # Registry PostgreSQL database, orchestrator schema. The schema and tables are this repository's
+  # db/ scripts (db/changelog.xml), applied by hand; the orchestrator runs no migrations.
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
+    hikari:
+      # Every connection works in the orchestrator schema, so the SQL uses unqualified names.
+      schema: ${DB_SCHEMA:orchestrator}
 
 management:
   endpoint:

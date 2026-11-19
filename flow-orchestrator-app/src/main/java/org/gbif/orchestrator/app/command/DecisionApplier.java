@@ -130,6 +130,11 @@ public class DecisionApplier {
                     null));
           }
           String reason = stepReason(notes, action.step(), action.status());
+          if (action.status() == Status.ABORTED
+              && (step.status() == Status.QUEUED || step.status() == Status.RUNNING)) {
+            // A cancelled step had a dispatched attempt: close it, the worker's reply is ignored.
+            attempts.abort(id, action.step(), attemptNo, reason, now);
+          }
           steps.update(id, action.step(), action.status(), attemptNo, now, reason);
           current.put(
               action.step(),

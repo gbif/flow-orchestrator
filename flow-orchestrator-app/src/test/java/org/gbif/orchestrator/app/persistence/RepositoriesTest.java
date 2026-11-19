@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Round trips through every repository against the H2 copy of the registry schema. */
+/** Round trips through every repository against the orchestrator table script on H2. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class RepositoriesTest {
 

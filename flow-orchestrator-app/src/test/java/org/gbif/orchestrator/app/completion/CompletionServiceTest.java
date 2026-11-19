@@ -340,6 +340,65 @@ class CompletionServiceTest {
     assertEquals(Status.QUEUED, steps.findByExecution(id).get(0).status(), "rolled back");
   }
 
+  @Test
+  void cancelAbortsTheWorkflowAndALateCompletionIsIgnored() {
+    UUID id = start();
+
+    assertEquals(
+        org.gbif.orchestrator.app.command.CommandResult.Kind.ACCEPTED,
+        commands.handle(cancel("jdoe", "uploaded the wrong file")).kind());
+
+    WorkflowExecution execution = executions.find(id).orElseThrow();
+    assertEquals(Status.ABORTED, execution.status());
+    assertNotNull(execution.finished());
+    assertEquals("Cancelled by jdoe: uploaded the wrong file", execution.reason());
+    List<StepExecution> stepRows = steps.findByExecution(id);
+    assertTrue(stepRows.stream().allMatch(s -> s.status() == Status.ABORTED), stepRows::toString);
+    StepAttempt dispatched = attempts.find(id, VALIDATE, 1).orElseThrow();
+    assertEquals(Status.ABORTED, dispatched.status());
+    assertNotNull(dispatched.finished());
+
+    WorkflowFinished event = json.read(lastMessage(id).payload(), WorkflowFinished.class);
+    assertEquals(WorkflowResult.ABORTED, event.result());
+    assertEquals("Cancelled by jdoe: uploaded the wrong file", event.reason());
+    long messages = outbox.findByExecution(id).size();
+
+    // The analyser finishes anyway: its reply changes nothing.
+    service.handle(
+        completed(id, VALIDATE, 1, Outcome.SUCCEEDED, null, List.of(analysis(true, null))));
+
+    assertEquals(Status.ABORTED, executions.find(id).orElseThrow().status());
+    assertEquals(Status.ABORTED, attempts.find(id, VALIDATE, 1).orElseThrow().status());
+    assertEquals(messages, outbox.findByExecution(id).size());
+  }
+
+  @Test
+  void cancelIsRejectedWithoutARunningWorkflow() {
+    assertEquals(
+        org.gbif.orchestrator.app.command.CommandResult.Kind.REJECTED,
+        commands.handle(cancel("jdoe", null)).kind());
+
+    start();
+    commands.handle(cancel("jdoe", null));
+    var again = commands.handle(cancel("jdoe", null));
+    assertEquals(org.gbif.orchestrator.app.command.CommandResult.Kind.REJECTED, again.kind());
+    assertTrue(again.reason().contains("already ended as ABORTED"), again.reason());
+  }
+
+  private static WorkflowCommand cancel(String user, String reason) {
+    return new WorkflowCommand(
+        UUID.randomUUID(),
+        CommandType.CANCEL,
+        Domain.VALIDATION,
+        DATASET,
+        1,
+        null,
+        null,
+        user,
+        reason,
+        Instant.now());
+  }
+
   private UUID start() {
     return commands
         .handle(

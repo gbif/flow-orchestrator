@@ -2,10 +2,13 @@
 
 IMAGE=$1
 BASE_REGISTRY=${2:-docker.gbif.org/third-party}
+# The Maven module whose runnable JAR goes in the image: flow-orchestrator-app (the engine) or
+# flow-orchestrator-ws (the validation web service).
+MODULE=${3:-flow-orchestrator-app}
 
-# The app module produces both a plain JAR and a runnable shaded JAR.
+# Each service module produces both a plain JAR and a runnable shaded JAR.
 # Only the shaded JAR is packaged in the Docker image.
-JAR_DIR="flow-orchestrator-app/target"
+JAR_DIR="${MODULE}/target"
 JAR_PATTERN="${JAR_DIR}/*-shaded.jar"
 
 mapfile -t JARS < <(compgen -G "${JAR_PATTERN}" || true)

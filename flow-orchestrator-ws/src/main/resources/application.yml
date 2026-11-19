@@ -1,0 +1,96 @@
+# flow-orchestrator-ws: the validation web service (formerly pipelines-validator-ws).
+# Settings carried over from validator-ws keep their names; deployments can reuse their values.
+spring:
+  application:
+    name: flow-orchestrator-ws
+  # Registry PostgreSQL database, orchestrator schema (the db/ scripts, applied by hand). Connect
+  # as the ws role (db/004): it writes only the validation tables.
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      schema: ${DB_SCHEMA:orchestrator}
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+  servlet:
+    multipart:
+      enabled: true
+      location: ${UPLOAD_WORKING_DIRECTORY:/tmp/flow-orchestrator-ws}
+      max-file-size: ${UPLOAD_MAX_SIZE:1GB}
+      max-request-size: ${UPLOAD_MAX_SIZE:1GB}
+  # SMTP for the validation emails (spring.mail.host, port, username, password, ...).
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:25}
+
+# The shared validation store; the pipelines workers read storePath/<validationKey>/.
+storePath: ${STORE_PATH}
+maxRunningValidationPerUser: ${MAX_RUNNING_VALIDATIONS_PER_USER:3}
+
+validation:
+  url:
+    # comma separated hosts that may be fetched even if they resolve to non-public addresses
+    allowedPrivateHosts: ${VALIDATION_URL_ALLOWED_PRIVATE_HOSTS:}
+
+gbif:
+  api:
+    url: ${GBIF_API_URL}
+  ws:
+    security:
+      appKey: ${GBIF_APP_KEY}
+      appSecret: ${GBIF_APP_SECRET}
+      wrapContent: false
+  portal:
+    url: ${GBIF_PORTAL_URL:https://www.gbif.org}
+  validator:
+    url: ${GBIF_VALIDATOR_URL:https://www.gbif.org}
+  mail:
+    from: ${MAIL_FROM:no-reply@gbif.org}
+    bcc: ${MAIL_BCC:}
+
+# ChecklistBank, for the poller of validations waiting for it.
+clb:
+  api:
+    url: ${CLB_API_URL:https://api.checklistbank.org/}
+    user: ${CLB_API_USER:}
+    password: ${CLB_API_PASSWORD:}
+  cleaner:
+    cron: ${CLB_CLEANER_CRON:0 0 * * * *}
+    hoursOld: ${CLB_CLEANER_HOURS_OLD:24}
+
+retentionPolicy:
+  cron: ${RETENTION_CRON:0 0 3 * * *}
+  keepDays: ${RETENTION_KEEP_DAYS:90}
+
+orchestrator:
+  ws:
+    rabbitmq:
+      host: ${RABBIT_HOST:localhost}
+      port: ${RABBIT_PORT:5672}
+      username: ${RABBIT_USERNAME:guest}
+      password: ${RABBIT_PASSWORD:guest}
+      virtual-host: ${RABBIT_VHOST:/}
+    messaging:
+      enabled: ${ORCHESTRATOR_WS_MESSAGING_ENABLED:true}
+      dead-letter-exchange: orchestrator.dlx
+      # The validation engine's command queue (flow-orchestrator-app with prefix "validation").
+      commands:
+        exchange: orchestrator
+        routing-key: validation.command
+      workflow-finished:
+        exchange: orchestrator
+        routing-key: validation.workflow.finished
+      workflow-finished-queue: orchestrator-ws.validation.workflow.finished
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}

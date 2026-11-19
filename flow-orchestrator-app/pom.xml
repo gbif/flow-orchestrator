@@ -78,6 +78,19 @@
   </dependencies>
 
   <build>
+    <testResources>
+      <testResource>
+        <directory>src/test/resources</directory>
+      </testResource>
+      <!-- The repository's schema scripts (db/), which the H2 tests run as is. -->
+      <testResource>
+        <directory>${project.basedir}/../db</directory>
+        <targetPath>db</targetPath>
+        <includes>
+          <include>*.sql</include>
+        </includes>
+      </testResource>
+    </testResources>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>

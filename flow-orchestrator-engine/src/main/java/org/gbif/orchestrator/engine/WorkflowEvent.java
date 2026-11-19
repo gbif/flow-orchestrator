@@ -22,7 +22,9 @@ public final class WorkflowEvent {
   public enum Kind {
     START,
     COMPLETED,
-    FAILED
+    FAILED,
+    /** Ends the workflow: every unfinished step and the workflow become ABORTED. */
+    CANCEL
   }
 
   private final Kind kind;
@@ -35,6 +37,10 @@ public final class WorkflowEvent {
 
   public static WorkflowEvent start() {
     return new WorkflowEvent(Kind.START, null);
+  }
+
+  public static WorkflowEvent cancel() {
+    return new WorkflowEvent(Kind.CANCEL, null);
   }
 
   public static WorkflowEvent completed(StepType step) {

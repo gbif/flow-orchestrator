@@ -34,6 +34,7 @@ import org.gbif.orchestrator.engine.WorkflowState.Status;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -109,6 +110,7 @@ public class CommandService {
     CommandResult result =
         switch (command.type()) {
           case START -> start(command);
+          case CANCEL -> cancel(command);
           case RETRY_STEP, RERUN_FROM, RESTART ->
               CommandResult.rejected(command.type() + " is not supported yet");
         };
@@ -172,5 +174,47 @@ public class CommandService {
         new DagWorkflowEngine(definition.dag()).evaluate(loaded.state(), WorkflowEvent.start());
     applier.apply(loaded, decision);
     return CommandResult.accepted(id);
+  }
+
+  /**
+   * Ends the latest run of the subject's workflow as {@code ABORTED}. Steps that are queued or
+   * running are aborted too; the workers are not stopped and their late completions are ignored.
+   */
+  private CommandResult cancel(WorkflowCommand command) {
+    if (command.domain() != properties.getDomain()) {
+      return CommandResult.rejected(
+          "Domain " + command.domain() + " is not handled by this instance");
+    }
+    Optional<WorkflowExecution> latest =
+        executions.findLatestRun(command.domain(), command.datasetKey(), command.attempt());
+    if (latest.isEmpty()) {
+      return CommandResult.rejected("No workflow for this dataset and attempt");
+    }
+    WorkflowExecution execution = latest.get();
+    if (isTerminal(execution.status())) {
+      return CommandResult.rejected("Workflow already ended as " + execution.status());
+    }
+    Optional<WorkflowDefinition> definition = definitions.byName(execution.workflowName());
+    if (definition.isEmpty()) {
+      return CommandResult.rejected(
+          "Workflow definition " + execution.workflowName() + " is no longer configured");
+    }
+
+    WorkflowStateLoader.Loaded loaded = loader.load(execution.id());
+    WorkflowDecision decision =
+        new DagWorkflowEngine(definition.get().dag())
+            .evaluate(loaded.state(), WorkflowEvent.cancel());
+    String reason =
+        "Cancelled by "
+            + command.requestedBy()
+            + (command.reason() == null || command.reason().isBlank()
+                ? ""
+                : ": " + command.reason());
+    applier.apply(loaded, decision, new DecisionNotes(false, reason, Map.of(), reason));
+    return CommandResult.accepted(execution.id());
+  }
+
+  private static boolean isTerminal(Status status) {
+    return status == Status.FINISHED || status == Status.FAILED || status == Status.ABORTED;
   }
 }

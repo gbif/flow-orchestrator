@@ -24,5 +24,9 @@ publish() {
   esac
 }
 
-# sql QUERY: runs a query in the registry database, unaligned output.
-sql() { $COMPOSE exec -T postgres psql -U localtest -d registry -tA -F '|' -c "$1"; }
+# sql QUERY: runs a read-only query in the orchestrator schema, as registry does (registry role,
+# SELECT only), unaligned output.
+sql() {
+  $COMPOSE exec -T -e PGOPTIONS='-c search_path=orchestrator' postgres \
+    psql -U registry -d registry -tA -F '|' -c "$1"
+}

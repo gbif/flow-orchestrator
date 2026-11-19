@@ -1,13 +1,16 @@
 # Test overrides, loaded in addition to the main application.yml.
 spring:
   datasource:
-    url: jdbc:h2:mem:orchestrator-${random.uuid};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    # INIT creates the schema that 001-orchestrator-schema.sql creates in PostgreSQL (that file
+    # is PostgreSQL-only); the connections then use it as their current schema (hikari.schema).
+    url: jdbc:h2:mem:orchestrator-${random.uuid};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS orchestrator
     username: sa
     password: ""
   sql:
     init:
       mode: always
-      schema-locations: classpath:schema-h2.sql
+      # The production table script itself, not a copy.
+      schema-locations: classpath:db/002-orchestrator-tables.sql
 
 orchestrator:
   domain: VALIDATION

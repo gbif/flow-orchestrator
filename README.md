@@ -9,10 +9,10 @@ Workers do not manage workflow state.
 This repository replaces the former `validator-orchestrator` module in the pipelines repository.
 The redesign is tracked in [docs/architecture.md](docs/architecture.md).
 
-**Status:** Phase A, round 5. Engine, message contracts, persistence, START and step-completion
-handling, reports, RabbitMQ messaging, per-step requests, report interpretation (rejections) and
-the DwC-DP analyser adapter are in place; the pipelines DwC-DP validator jobs reply to the
-orchestrator. Retry, rerun and recovery come in round 6. A local environment is in
+**Status:** Round A (Phase B) implemented, not deployed. The engine runs the DwC-DP validation
+chain (rounds 1–5), and `flow-orchestrator-ws` takes over the validation API from
+pipelines-validator-ws: DwC-DP validations run through the engine, other formats keep their
+legacy path until Round B. Retry, rerun and recovery come later. A local environment is in
 [local-test/USAGE.md](local-test/USAGE.md).
 
 ## Modules
@@ -21,13 +21,20 @@ orchestrator. Retry, rerun and recovery come in round 6. A local environment is 
 |---|---|
 | `flow-orchestrator-api` | Message contracts as plain records (commands, step completions, workflow events, report types). Jackson only; gbif-api `provided`. |
 | `flow-orchestrator-engine` | Pure Java workflow engine: DAG definitions, join policies, transition decisions. No Spring, DB or messaging. |
-| `flow-orchestrator-app` | Spring Boot service: configuration, persistence, command and completion handling, messaging (postal), Actuator. |
+| `flow-orchestrator-app` | The engine service (image `flow-orchestrator`): configuration, persistence, command and completion handling, messaging (postal), Actuator. |
+| `flow-orchestrator-ws` | The validation web service (image `flow-orchestrator-ws`), formerly pipelines-validator-ws: `/validation` API, uploads, admission, emails, ChecklistBank callback and jobs. Starts workflows with commands; reads their state. |
+
+The database schema `orchestrator` (in the registry database) is defined in [db/](db/) and applied
+by hand per environment; [db/migration/](db/migration/) has the one-off copy of validator-ws's
+data.
 
 ## Build
 
-Requires Java 17 and Maven. Until postal-service 2.1.16 is released, install its snapshot first
-(`mvn install` in the postal-service repository); it adds the publisher-confirm and dead-letter
-builders the orchestrator uses.
+Requires Java 17 and Maven. Until postal-service 2.1.16 is released, the orchestrator uses
+`2.1.16-FEATURE-ORCHESTRATION-SNAPSHOT`, which Jenkins publishes from postal's
+`feature/orchestration` branch (the branch's pom stays `2.1.16-SNAPSHOT`). It adds the
+publisher-confirm and dead-letter builders, the `stepHeader` on pipeline messages and java-time
+support.
 
 ```bash
 mvn clean verify         # build and run all tests
@@ -36,7 +43,8 @@ mvn spotless:apply       # format (CI runs spotless:check)
 
 The runnable artifact is `flow-orchestrator-app/target/flow-orchestrator-app-<version>-shaded.jar`.
 
-It needs the registry PostgreSQL database (with registry changesets 189/190 applied by hand),
+It needs the registry PostgreSQL database with the `orchestrator` schema (this repository's
+`db/` scripts, applied by hand; see `docs/architecture.md`),
 RabbitMQ, an instance domain and a messaging prefix:
 
 ```bash
@@ -47,14 +55,28 @@ RABBIT_HOST=localhost RABBIT_USERNAME=guest RABBIT_PASSWORD=guest \
 curl localhost:8080/actuator/health
 ```
 
-## Docker image
+### flow-orchestrator-ws
+
+`flow-orchestrator-ws/target/flow-orchestrator-ws-<version>-shaded.jar` serves the validation API
+on port 8080. It connects to the same database as role `orchestrator_ws` (it writes only the
+validation tables), sends commands to the engine's `validation` command queue, and mounts the
+shared validation store. Its settings keep validator-ws's names where they existed; see
+`flow-orchestrator-ws/src/main/resources/application.yml`. The main ones: `DB_URL`, `DB_USERNAME`,
+`DB_PASSWORD`; `STORE_PATH` (shared store the workers read); `GBIF_API_URL`, `GBIF_APP_KEY`,
+`GBIF_APP_SECRET` (remote authentication and user lookup for emails); `MAIL_HOST`, `MAIL_FROM`;
+`CLB_API_URL`, `CLB_API_USER`, `CLB_API_PASSWORD`; `RABBIT_*`. The gateway route `/v1/validation*`
+points at it instead of validator-ws.
+
+## Docker images
 
 ```bash
 mvn clean package -DskipTests
-build/docker-image.sh docker.gbif.org/flow-orchestrator:<version>
+build/docker-image.sh docker.gbif.org/flow-orchestrator:<version>                              # engine
+build/docker-image.sh docker.gbif.org/flow-orchestrator-ws:<version> '' flow-orchestrator-ws  # ws
 ```
 
-CI (`Jenkinsfile`) publishes `docker.gbif.org/flow-orchestrator:<version>`.
+CI (`Jenkinsfile`) publishes `docker.gbif.org/flow-orchestrator:<version>` and
+`docker.gbif.org/flow-orchestrator-ws:<version>`.
 
 ## Configuration
 

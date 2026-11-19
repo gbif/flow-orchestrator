@@ -66,6 +66,28 @@ public class StepAttemptRepository {
   }
 
   /**
+   * Ends a dispatched attempt that will not be completed (its step was cancelled): status {@code
+   * ABORTED}, no worker outcome, the reason as diagnostic.
+   */
+  public void abort(
+      UUID workflowExecutionId, StepType stepType, int attemptNo, String reason, Instant finished) {
+    jdbc.sql(
+            """
+            UPDATE step_attempt
+            SET status = :status, diagnostic = :diagnostic, finished = :finished
+            WHERE workflow_execution_id = :id AND step_type = :stepType
+              AND attempt_no = :attemptNo AND finished IS NULL
+            """)
+        .param("status", Status.ABORTED.name())
+        .param("diagnostic", reason)
+        .param("finished", toDb(finished))
+        .param("id", workflowExecutionId)
+        .param("stepType", stepType.name())
+        .param("attemptNo", attemptNo)
+        .update();
+  }
+
+  /**
    * Records the end of an attempt: its status, the worker's outcome, diagnostic, outputs and timing.
    */
   public void complete(

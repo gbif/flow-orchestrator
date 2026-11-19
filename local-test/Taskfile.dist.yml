@@ -32,6 +32,29 @@ tasks:
           -f docker/Dockerfile \
           -t localhost/flow-orchestrator:test .
 
+  build:ws:
+    desc: Build the flow-orchestrator-ws image from its shaded JAR (run "mvn package" first)
+    dir: ..
+    cmds:
+      - |
+        set -eu
+        set -- flow-orchestrator-ws/target/*-shaded.jar
+        if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+          echo 'Expected exactly one flow-orchestrator-ws/target/*-shaded.jar; run mvn package first.' >&2
+          exit 1
+        fi
+        podman build \
+          --build-arg BASE_REGISTRY=docker.gbif.org/third-party \
+          --build-arg "JAR_FILE=$1" \
+          -f docker/Dockerfile \
+          -t localhost/flow-orchestrator-ws:test .
+
+  up:ws:
+    desc: Start everything including flow-orchestrator-ws on 127.0.0.1:18081 (needs GBIF_API_URL and an app key in .env)
+    cmds:
+      - mkdir -p "${VALIDATION_STORE_DIR:-./store}"
+      - '{{.COMPOSE}} --profile ws up -d'
+
   up:
     desc: Start Postgres, RabbitMQ and the orchestrator
     cmds:

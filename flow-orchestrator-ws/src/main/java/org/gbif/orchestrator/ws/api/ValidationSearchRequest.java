@@ -1,0 +1,110 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.gbif.orchestrator.ws.api;
+
+import org.gbif.api.annotation.PartialDate;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+import jakarta.validation.constraints.Min;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.extern.jackson.Jacksonized;
+
+@Data
+@Builder
+@Jacksonized
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@AllArgsConstructor
+public class ValidationSearchRequest {
+
+  public enum SortOrder {
+    ASC,
+    DESC
+  }
+
+  @Data
+  @Builder
+  @Jacksonized
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  public static class SortBy {
+
+    /** Field to order by. */
+    private String field;
+
+    /** Sort order of this field. */
+    private SortOrder order;
+
+    @Override
+    public String toString() {
+      return field + ":" + order.name();
+    }
+  }
+
+  /** Identifier at the source. */
+  private String sourceId;
+
+  /** GBIF Installation from where the validation started. */
+  private UUID installationKey;
+
+  /** Validation statuses. */
+  private Set<Validation.Status> status;
+
+  @PartialDate("fromDate")
+  private Date fromDate;
+
+  @PartialDate("toDate")
+  private Date toDate;
+
+  private List<SortBy> sortBy;
+
+  @Builder.Default
+  @Min(0)
+  private Long offset = 0L;
+
+  @Builder.Default
+  @Min(0)
+  private Integer limit = 20;
+
+  private Integer clbDatasetKey;
+
+  public static class ValidationSearchRequestBuilder {
+
+    /** Adds a sort to the list of sortBy elements. */
+    private ValidationSearchRequestBuilder addSort(String fieldName, SortOrder order) {
+      if (sortBy == null) {
+        sortBy = new ArrayList<>();
+      }
+      sortBy.add(SortBy.builder().field(fieldName).order(order).build());
+      return this;
+    }
+
+    /** Sort by created date. */
+    public ValidationSearchRequestBuilder sortByCreated(SortOrder order) {
+      return addSort("created", order);
+    }
+
+    /** Sort by key. */
+    public ValidationSearchRequestBuilder sortByKey(SortOrder order) {
+      return addSort("key", order);
+    }
+  }
+}

@@ -2,3 +2,4 @@
 Taskfile.yml
 workdir/
 datapackages/
+store/

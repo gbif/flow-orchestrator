@@ -12,7 +12,7 @@ COPY --chown=stackable ${JAR_FILE} /app/service.jar
 COPY --chown=stackable docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Actuator
+# HTTP: the ws API and Actuator
 EXPOSE 8080
 
 ENV JVM_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Xms128m"

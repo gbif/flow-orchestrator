@@ -10,8 +10,14 @@ services:
       POSTGRES_USER: localtest
       POSTGRES_PASSWORD: localtest
     volumes:
-      # The orchestrator tables (registry changeset 189). The test schema is a verbatim copy.
-      - ../flow-orchestrator-app/src/test/resources/schema-h2.sql:/docker-entrypoint-initdb.d/189-orchestrator-tables.sql:ro
+      # The orchestrator schema from the repository's db/ scripts, applied as in the real
+      # environments: roles, then the schema and grants, then the tables as the orchestrator role.
+      - ./db/00-roles.sql:/docker-entrypoint-initdb.d/00-roles.sql:ro
+      - ../db/001-orchestrator-schema.sql:/docker-entrypoint-initdb.d/10-orchestrator-schema.sql:ro
+      - ./db/20-orchestrator-tables.sh:/docker-entrypoint-initdb.d/20-orchestrator-tables.sh:ro
+      - ../db/002-orchestrator-tables.sql:/orchestrator-db/002-orchestrator-tables.sql:ro
+      - ../db/003-validation-tables.sql:/orchestrator-db/003-validation-tables.sql:ro
+      - ../db/004-validation-grants.sql:/orchestrator-db/004-validation-grants.sql:ro
     ports:
       - "127.0.0.1:15432:5432"
     healthcheck:
@@ -47,7 +53,7 @@ services:
       SPRING_CONFIG_ADDITIONAL_LOCATION: "file:/etc/flow-orchestrator/"
       SPRING_PROFILES_ACTIVE: local
       DB_URL: jdbc:postgresql://postgres:5432/registry
-      DB_USERNAME: localtest
+      DB_USERNAME: orchestrator
       DB_PASSWORD: localtest
       ORCHESTRATOR_DOMAIN: VALIDATION
       ORCHESTRATOR_MESSAGING_PREFIX: validation
@@ -56,6 +62,35 @@ services:
       RABBIT_PASSWORD: localtest
     ports:
       - "127.0.0.1:18080:8080"
+
+  # The validation web service, opt in with --profile ws (task up:ws). Users are authenticated
+  # remotely, so it needs a GBIF API (GBIF_API_URL, for example UAT) and an app key in .env.
+  ws:
+    profiles: ["ws"]
+    image: ${ORCHESTRATOR_WS_IMAGE:-localhost/flow-orchestrator-ws:test}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/registry
+      DB_USERNAME: orchestrator_ws
+      DB_PASSWORD: localtest
+      STORE_PATH: /data/store
+      UPLOAD_WORKING_DIRECTORY: /data/upload
+      RABBIT_HOST: rabbitmq
+      RABBIT_USERNAME: localtest
+      RABBIT_PASSWORD: localtest
+      GBIF_API_URL: ${GBIF_API_URL:-https://api.gbif-uat.org/v1/}
+      GBIF_APP_KEY: ${GBIF_APP_KEY:-}
+      GBIF_APP_SECRET: ${GBIF_APP_SECRET:-}
+      # Mail is best effort; without an SMTP server the ws logs that it could not send.
+      MAIL_HOST: ${MAIL_HOST:-localhost}
+    volumes:
+      - ${VALIDATION_STORE_DIR:-./store}:/data/store
+    ports:
+      - "127.0.0.1:18081:8080"
 
   # Real DwC-DP analyser, opt in with --profile analyser (task up:analyser).
   analyser:

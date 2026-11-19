@@ -1,0 +1,47 @@
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.8.xsd">
+
+  <!--
+    The orchestrator schema in the registry database, owned by flow-orchestrator.
+    Like registry's changelog, this only documents the SQL: each environment is changed by hand,
+    in this order. The orchestrator runs no migrations.
+  -->
+
+  <!-- As a role that may create schemas. PostgreSQL only. Role names are placeholders. -->
+  <changeSet id="orchestrator-1" author="nreibke" runInTransaction="false" ignore="true">
+    <sqlFile path="db/001-orchestrator-schema.sql" splitStatements="true" stripComments="true"/>
+  </changeSet>
+
+  <!-- As the orchestrator role, so it owns the tables. -->
+  <changeSet id="orchestrator-2" author="nreibke">
+    <sqlFile path="db/002-orchestrator-tables.sql" splitStatements="true"/>
+    <rollback>
+      <sql>
+        DROP TABLE orchestrator.workflow_report;
+        DROP TABLE orchestrator.outbox_message;
+        DROP TABLE orchestrator.workflow_command;
+        DROP TABLE orchestrator.step_attempt;
+        DROP TABLE orchestrator.step_execution;
+        DROP TABLE orchestrator.workflow_execution;
+      </sql>
+    </rollback>
+  </changeSet>
+
+  <!-- Validation tables for flow-orchestrator-ws (Round A), as the orchestrator role. -->
+  <changeSet id="orchestrator-3" author="nreibke">
+    <sqlFile path="db/003-validation-tables.sql" splitStatements="true"/>
+    <rollback>
+      <sql>
+        DROP TABLE orchestrator.shedlock;
+        DROP TABLE orchestrator.validation;
+      </sql>
+    </rollback>
+  </changeSet>
+
+  <!-- Grants for flow-orchestrator-ws. PostgreSQL only. Role names are placeholders. -->
+  <changeSet id="orchestrator-4" author="nreibke" runInTransaction="false" ignore="true">
+    <sqlFile path="db/004-validation-grants.sql" splitStatements="true" stripComments="true"/>
+  </changeSet>
+</databaseChangeLog>

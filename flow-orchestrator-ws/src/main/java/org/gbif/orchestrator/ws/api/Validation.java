@@ -1,0 +1,155 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.gbif.orchestrator.ws.api;
+
+import org.gbif.api.model.registry.Dataset;
+
+import java.util.Date;
+import java.util.EnumSet;
+import java.util.Set;
+import java.util.UUID;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+import io.swagger.v3.oas.annotations.Hidden;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.extern.jackson.Jacksonized;
+
+@Data
+@Builder
+@Jacksonized
+// Constructors are needed for MyBatis, persistence layer.
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class Validation {
+
+  private static final EnumSet<Status> EXECUTING_STATUSES =
+      EnumSet.of(
+          Status.SUBMITTED,
+          Status.DOWNLOADING,
+          Status.RUNNING,
+          Status.QUEUED,
+          Status.WAITING_FOR_CHECKLISTBANK);
+
+  private static final EnumSet<Status> FINISHED_STATUSES =
+      EnumSet.of(Status.FINISHED, Status.FAILED, Status.ABORTED);
+
+  public enum Status {
+    DOWNLOADING,
+    SUBMITTED,
+    RUNNING,
+    FINISHED,
+    ABORTED,
+    FAILED,
+    QUEUED,
+    WAITING_FOR_CHECKLISTBANK
+  }
+
+  /** Validation key/identifier. */
+  private UUID key;
+
+  /** Identifier at the source. */
+  private String sourceId;
+
+  /** GBIF Installation from where the validation started. */
+  private UUID installationKey;
+
+  /** Notification email addresses. */
+  @JsonIgnore private Set<String> notificationEmails;
+
+  /** Timestamp when the validation was created. */
+  private Date created;
+
+  /** Last modified timestamp. */
+  private Date modified;
+
+  /** Deleted timestamp. */
+  private Date deleted;
+
+  /** User that triggered or owns the validation. */
+  private String username;
+
+  /** File name to be validated. */
+  private String file;
+
+  /** File size in bytes. */
+  private Long fileSize;
+
+  /** Detected file format. */
+  private FileFormat fileFormat;
+
+  /** Validation status. */
+  private Status status;
+
+  /** CLB dataset key used only in checklist validations. */
+  private Integer clbDatasetKey;
+
+  /**
+   * RabbitMQ message sent before triggering the CLB validation. Needed to resume the workflow after
+   * CLB callback.
+   */
+  @Hidden private String clbValidationMessage;
+
+  /** Dataset parsed from EML file */
+  @JsonIgnore private Dataset dataset;
+
+  /** Validation result. */
+  @Builder.Default private Metrics metrics = Metrics.builder().build();
+
+  public static Set<Status> executingStatuses() {
+    return EXECUTING_STATUSES;
+  }
+
+  public static Set<Status> finishedStatuses() {
+    return FINISHED_STATUSES;
+  }
+
+  @JsonIgnore
+  public boolean succeeded() {
+    return Status.FINISHED == this.status;
+  }
+
+  @JsonIgnore
+  public boolean failed() {
+    return Status.ABORTED == this.status || Status.FAILED == this.status;
+  }
+
+  @JsonIgnore
+  public boolean isExecuting() {
+    return EXECUTING_STATUSES.contains(status);
+  }
+
+  @JsonIgnore
+  public boolean hasFinished() {
+    return FINISHED_STATUSES.contains(status);
+  }
+
+  public enum ErrorCode {
+    MAX_RUNNING_VALIDATIONS,
+    MAX_FILE_SIZE_VIOLATION,
+    AUTHORIZATION_ERROR,
+    NOT_FOUND,
+    IO_ERROR,
+    VALIDATION_IS_NOT_EXECUTING,
+    NOTIFICATION_EMAILS_MISSING,
+    WRONG_KEY_IN_REQUEST,
+    /** A legacy status update for a validation whose state the orchestrator owns. */
+    ORCHESTRATED
+  }
+}

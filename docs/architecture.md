@@ -29,7 +29,7 @@ Phase A rounds (Proposed order):
 1. Repository scaffold, pure engine port, this document. *(done)*
 2. Contracts: the `flow-orchestrator-api` module (section 6a). *(done)* It holds the command messages, the
    completion envelope, the workflow-finished event and the report type constants.
-3. Persistence: table DDL as registry Liquibase changesets, a mirrored H2 test schema, `JdbcClient`
+3. Persistence: table DDL (since 2026-11-19 in this repository's `db/` scripts, schema `orchestrator`), H2 tests on the same script, `JdbcClient`
    repositories, state loading with optimistic versioning, START handling and outbox rows. *(done)*
 4. Messaging: outbox relay with publisher confirms, command and completion listeners with
    dead-letter queues (postal-service extended with builders, section 6), completion handling,
@@ -39,7 +39,206 @@ Phase A rounds (Proposed order):
    step contract redesign, the analyser adapter, report interpreters and `SKIP_FROM`, the
    pipelines DwC-DP validator jobs in orchestrator mode, and a ported `local-test/`. The summary
    report builder moves to Phase B.
-6. Retry, rerun and recovery (timeouts, stale-attempt handling).
+6. **Round A** (Phase B starts; revised 2026-11-19): validator-ws moves into a new module of this
+   repository, `flow-orchestrator-ws`, and DwC-DP validations run through the orchestrator (see
+   "Rounds A and B" below).
+7. **Round B:** the DwC-A validation chain in orchestrator mode, then all validator-ws reporting is
+   removed from pipelines.
+8. Retry, rerun and recovery (timeouts, stale-attempt handling).
+
+### Rounds A and B (Decided 2026-11-18, Round A revised 2026-11-19)
+
+**Revision 2026-11-19 (with a colleague):** validator-ws does **not** go into registry-ws. It
+becomes `flow-orchestrator-ws`, a separately deployed module of this repository (the
+"orchestration-ws"), so workflow and validation live together and registry gets smaller. Its
+tables go into the `orchestrator` schema. Registry is not involved in validation any more.
+
+- **Round A, one round:** validator-ws moves into `flow-orchestrator-ws` **and** DwC-DP
+  validations run through the orchestrator. DwC-A, XML, tabular and ColDP keep today's legacy
+  path (workers GET/PUT `/validation/{key}`) until Round B; the ws serves both paths meanwhile.
+  Ingestion is untouched.
+- **Two deployables, one schema.** `flow-orchestrator-ws` serves the user-facing `/validation` API
+  (same paths, so the gateway route `/v1/validation*` only changes target), uploads and URL
+  downloads, admission, emails, the ChecklistBank callback and the scheduled jobs. It writes the
+  `validation` table and sends `WorkflowCommand`s. `flow-orchestrator-app` keeps running the
+  workflows and remains the only writer of the workflow tables. Both are "the orchestrator" for
+  schema ownership: everything in `orchestrator` is written by this repository's services.
+- **Built from the security-fixed validator-ws:** pipelines branch
+  `origin/fix/validator-ownership-and-upload` (`d80a64934a`, gbif/security-issues#46: owner/admin/
+  app checks on update, cancel and delete; sanitised upload names; no undeleting; the
+  upload/insert race). The ChecklistBank callback stays unauthenticated by design (`412eddc9e6`).
+- **Status and metrics are composed at read time** for orchestrated validations:
+  `GET /validation/{key}` builds `status`, `metrics.stepTypes` and `metrics.fileInfos` from the
+  workflow tables and reports, in today's response shape, so the data-validator UI is unchanged.
+  Later, together with the frontend, the API moves to exposing workflow, steps and reports
+  directly. Legacy validations keep their stored `metrics`.
+- **Admission stays in front of the workflow**, in the ws: the per-user running cap, the file and
+  URL checks (size, reachable URL, content type, format detection, which selects the workflow),
+  and "installationKey requires a notification email". What runs, in which order and whether it
+  may retry belongs to the engine.
+- **Emails** (validator-mail) move into the ws; for orchestrated validations they are sent on
+  `WorkflowFinished`.
+- **Jobs:** ChecklistBank polling and retention run in the ws, with ShedLock so each runs on one
+  instance.
+- **Data access:** ported to `JdbcClient` (no MyBatis), like the app.
+- **Ingestion guards in registry** (pipelines history "already running", reruns from stored
+  messages, the crawl refusal) are untouched until Phase C.
+- **Round B** adapts the old-coordinator DwC-A chain (archive validation, DwC-A and XML to-verbatim,
+  the ChecklistBank wait) and then deletes the legacy validator-ws reporting from the shared steps;
+  doing it earlier would break DwC-A validation.
+- **Modules** (decided 2026-11-18):
+  - validator-mail moves into `flow-orchestrator-ws` (revised 2026-11-19, was registry).
+    validator-api is still used by the legacy workers until Round B; see the Round A plan for
+    how the ws depends on it.
+  - validator-eml moves to a **new, small EML validation library in its own repository**, which
+    registry, the pipelines archive check and the DwC-DP analyser share. It combines
+    well-formedness, validation against the declared schema with bundled schemas (EML 2.2.0 and
+    the GBIF profile versions, no network), the GBIF metadata quality rules (today
+    `BasicMetadataEvaluator` in validator-core) and a neutral result each caller maps to its own
+    issues. The repository is created and mounted by the user before the work starts.
+    **Built 2026-11-18** as `org.gbif:gbif-eml-validation:1.0.0-SNAPSHOT` (package
+    `org.gbif.eml.validation`, motherpom 59, Java 17). Decided with it:
+    - Bundled schemas: EML 2.1.1, EML 2.2.0 and GBIF profile 1.0, 1.0.1, 1.0.2, 1.1, 1.2, 1.3,
+      chosen by the root namespace's `xsi:schemaLocation`. A missing or unbundled location uses
+      the caller's default schema with a warning (registry and pipelines: GBIF profile 1.3; the
+      analyser: EML 2.2.0); without a default it is an error and no schema validation runs.
+      Nothing is fetched.
+    - The quality rules keep gbif-api's `Dataset`/`CitationGenerator` and gbif-metadata's
+      `DatasetEmlParser`, so they match registry's interpretation. They are warnings.
+    - A DOCTYPE is refused (`NOT_WELL_FORMED`): `DatasetEmlParser` (gbif-metadata-profile-eml
+      3.1) resolves external entities, so it must only see documents the library has accepted.
+      Registry's other `DatasetEmlParser` uses are exposed the same way (to raise separately).
+    - pipelines' `MetadataPath` moved too, as `ArchiveMetadata.find` (ignores a `meta.xml`
+      location outside the archive).
+    - Consumers switch in Round A (the ws's `/validation/eml`) and Round B (the archive check,
+      the analyser's `EmlValidator`); pipelines' `validator-eml` is deleted then.
+  - validator-core is validation *steps*: the archive checks (`DwcaValidator`,
+    `DwcaFileTermCounter`, `BasicMetadataEvaluator`) and the ChecklistBank submission and
+    evaluation. It is redesigned in Round B. Its four unused classes (`LineCounter`,
+    `RawToInterpreted`, `IndexableRules`, `ColdpTermDeserializer`) are deleted.
+  - `ChecklistbankWsClient` is an integration client for ChecklistBank's API (submit, import
+    status, verbatim records), not validator logic. It belongs with ChecklistBank (an official
+    COL client if one exists) or in a small client artifact; the worker uses submit and verbatim,
+    the waiting side (the orchestrator, Round B) uses the import status. Round A carries only
+    what the ws's poller needs.
+
+### Round A plan (Decided 2026-11-19; implemented, not deployed)
+
+**Implemented 2026-11-19, with these deviations from the plan below:**
+- **XML detection is not fixed.** An XML upload would run `XML_TO_VERBATIM`, which writes
+  registry's ingestion history instead of the validation (section 9). It keeps failing as an
+  unsupported format until Round B fixes that step.
+- **Reports:** `GET /validation/{key}/validationreport/{attempt}/{type}` reads `workflow_report`.
+  The PUT counterpart is gone; it had no production caller.
+- **ChecklistBank imports stay raw JSON.** The callback body and the poller's import are passed
+  on as ChecklistBank sent them, and only `status` is read. This avoids validator-core's ColDP
+  term deserializer and the catalogue dependency. (Correction to "Modules" above:
+  `ColdpTermDeserializer` *is* used, through `ObjectMapperUtils`, by the coordinator's
+  checklist validators.)
+- **Commands are sent directly**, with publisher confirms, not through an outbox. A failed start
+  marks the validation `FAILED` (with an email); a failed `CANCEL` is logged, and the validation
+  is cancelled for the user anyway.
+- **Emails are best effort:** the status is stored first, and a mail or user-lookup failure is
+  logged. Otherwise a `WorkflowFinished` would be dead-lettered for an email.
+- **Listing by status:** an orchestrated validation's stored status is `QUEUED` until its
+  workflow ends (the composed status is only computed when it is read). A search for `RUNNING`
+  therefore misses running DwC-DP validations. Fixed when the API exposes workflows (later).
+- **Kept from validator-ws:** POSTs answer 201 and void responses 204 (gbif-common-ws).
+- **Schema scripts moved to the repository root** (`db/`), so both services' tests run them.
+  H2 needs `NON_KEYWORDS=KEY`, because the `key` column keeps its name.
+
+
+Source: validator-ws (`pipelines-validator-ws`, `validator-api`, `validator-mail`) as on pipelines
+`origin/fix/validator-ownership-and-upload`. Survey findings that shaped this are listed at the end.
+
+**flow-orchestrator-api**
+- `CommandType.CANCEL`: ends a running workflow. Needed to cancel an orchestrated validation.
+
+**flow-orchestrator-app (engine)**
+- `CANCEL`: the execution ends `ABORTED`. `PENDING` and dispatched steps become `ABORTED` with the
+  reason "Cancelled by <user>". A `WorkflowFinished` (`ABORTED`) is sent. A completion that arrives
+  later for an aborted attempt is ignored and logged. Workers are not stopped; a running Spark job
+  finishes and its result is dropped.
+
+**Schema (`db/`, applied by hand)**
+- `003-validation-tables.sql`: `orchestrator.validation` with today's columns (including
+  `clb_dataset_key` and `clb_validation_message`). `status` and `file_format` become `varchar`
+  instead of Postgres enums, like the workflow tables, so a new format needs no `ALTER TYPE`
+  (validator-ws's missing changeset 004 shows why). Indexes for the per-user cap and the listing.
+  Also the ShedLock table `orchestrator.shedlock`.
+- Grants: a separate role for the ws (placeholder `orchestrator_ws`) with `SELECT, INSERT,
+  UPDATE` on `validation` and `shedlock`, and `SELECT` on the workflow tables and reports. The
+  engine's role gets `SELECT` on `validation`. Registry keeps `SELECT` on everything.
+- `db/migration/validator-ws-data.md`: the one-off copy per environment, run while validator-ws is
+  stopped. The `validation` rows (`pg_dump --data-only` from the validator database, loaded into
+  the `orchestrator` schema; enum values cast to text) and any `validation_report` rows into
+  `workflow_report` (`validation_key` becomes `dataset_key`, `report` text cast to jsonb).
+  validator-ws's `validation_report` table is not recreated; it has no production writer.
+
+**flow-orchestrator-ws (new module, own deployable)**
+- **Security:** remote authentication against the GBIF API (gbif-common-ws
+  `RemoteAuthWebSecurityConfigurer`), as validator-ws does, with the same roles and the
+  colleague's ownership checks.
+- **Endpoints, same paths and shapes:**
+  - `/validation` (submit by upload or URL, get, list, cancel, delete, legacy PUT, eml, running,
+    `clbValidationCallback`, report GET/PUT).
+  - `/validation/eml` and `/validation/eml/schemas`, now on gbif-eml-validation. The response is
+    still `IssueInfo`, mapped from `EmlIssue`.
+  - `/validation/sequence` and `/validation/enumeration`.
+- **Submit:**
+  - Admission checks as today, then the `validation` row.
+  - **DWCDP:** a `WorkflowCommand` `START` (domain `VALIDATION`, dataset key = validation key,
+    attempt 1, parameter `fileFormat=DWCDP`). The row stays `QUEUED`.
+  - **Other formats:** today's legacy start messages.
+- **GET (orchestrated):** when a workflow execution exists for the validation, `status`,
+  `metrics.stepTypes` (from `step_execution`) and `metrics.fileInfos` (from the reports) are
+  composed from the workflow tables. Legacy rows return their stored `metrics`.
+- **WorkflowFinished listener:**
+  - Sets the row's terminal status: `FINISHED` (a rejection is `FINISHED` with
+    `indexeable=false`), `FAILED` or `ABORTED`.
+  - Sends the email to the stored notification emails, or else the owner.
+- **Cancel:**
+  - Orchestrated: the row becomes `ABORTED` and a `CANCEL` command is sent.
+  - Legacy: as today.
+- **Legacy PUT** to an orchestrated validation: refused with 409.
+- **Mail:** validator-mail moves into the module (templates en/es/ru, subjects, logo).
+- **Jobs:** `ClbValidationCleaner` and `RetentionPolicyTask` run under ShedLock and page through
+  all due rows, not only the first 20.
+- **ChecklistBank:** a minimal client with only `checkImport`, for the poller.
+- **Model:** the validator-api types (`Validation`, `Metrics`, `ValidationRequest`,
+  `ValidationSearchRequest`, `FileFormat`, the evaluation enums, `ClbDatasetImport`) are copied
+  into the module, which becomes their home. The JSON stays identical. pipelines' validator-api
+  stays for the legacy workers until Round B.
+- **Fixes beyond the security branch:**
+  - Notification emails kept on worker-triggered emails.
+  - An email for upload and download failures.
+  - An email only on the first transition to a terminal status (no duplicates).
+  - `NOT_FOUND` returns 404.
+  - XML uploads detected as `XML`.
+  - Default ordering for the listing (`created DESC`).
+- **Logged, not fixed:**
+  - `MAX_RUNNING_VALIDATIONS` stays 420.
+  - Search dates still snap to month boundaries.
+  - URL downloads still have no size limit.
+- **Tests:** H2 with the `db/` scripts, MockMvc for the resources, handwritten fakes for
+  messaging, mail and ChecklistBank (as in the app).
+
+**Deployment and other repos**
+- The gateway route `/v1/validation*` points at `flow-orchestrator-ws`. Workers keep calling
+  `registry.wsUrl/validation`, so pipelines does not change in Round A.
+- The ws mounts the shared validation store (`storePath`), as validator-ws does today.
+- validator-ws is switched off after the data copy. Its code in pipelines is deleted in Round B,
+  with the legacy reporting.
+- local-test gains the ws service.
+
+**Survey notes (validator-ws, 2026-11-19)**
+- Its own database (`validation.datasource.*`, requires `testdb=false`).
+- `master.xml` misses changeset 004 (DWCDP).
+- The DwC-DP start keys in the code (`validator.dwcdp.exchange` and `.routing-key`) differ from
+  the sample yml.
+- The ChecklistBank cleaner finishes and emails before the checklist results message is
+  processed.
+- Workers reach it via the gateway.
 
 ### Round 5 plan (Decided 2026-11-18)
 
@@ -85,6 +284,12 @@ VERBATIM_TO_IDENTIFIER → VERBATIM_TO_INTERPRETED → COLLECT_METRICS.
 - Release order: flow-orchestrator-api, analyser-service-api and postal (any order) → pipelines
   and crawler.
 
+**crawler** (done 2026-11-18, `feature/orchestration`): postal
+`2.1.16-FEATURE-ORCHESTRATION-SNAPSHOT` and analyser-service-api `0.0.9-SNAPSHOT`. Metasync only
+reads `valid`, so no code change; a test reads the analyser's new message with postal's mapper.
+Switch both to releases when they are cut. Its Jenkinsfile gained the feature-branch version stage
+(as in postal), so the branch publishes `2.0.15-FEATURE-ORCHESTRATION-SNAPSHOT`.
+
 **pipelines (validation only; ingestion and DwC-A validation keep today's behaviour)**
 - A validator callback whose message has a `stepHeader` runs in orchestrator mode: no
   validator-ws calls, no next message, and a `StepCompleted` at the end (`FAILED` with the
@@ -97,7 +302,7 @@ VERBATIM_TO_IDENTIFIER → VERBATIM_TO_INTERPRETED → COLLECT_METRICS.
 - Outputs for later steps: the record counts and `datasetType`.
 - To-verbatim in orchestrator mode ignores the message flags and reads the staged counts instead.
 
-**local-test:** Compose with Postgres (registry changeset 189 SQL), RabbitMQ, the orchestrator
+**local-test:** Compose with Postgres (the `db/` scripts, schema `orchestrator`), RabbitMQ, the orchestrator
 and the real analyser, plus a trigger that publishes a `WorkflowCommand`. Implemented as `local-test/` (USAGE.md):
 the pipelines steps can be simulated with `task complete`.
 
@@ -222,31 +427,41 @@ Proposal:
 
 **Decided**
 
-- **registry-ws** (absorbing validator-ws) is the only user-facing API. Start, retry and rerun are
-  requested through its existing secured endpoints (for example `PipelinesHistoryResource`
-  `run/{datasetKey}` and `run/{datasetKey}/{attempt}`). Registry turns each request into a
-  **RabbitMQ command** to the orchestrator, as `DefaultRegistryPipelinesHistoryTrackingService`
-  already does with `MessagePublisher`. Commands queue while the orchestrator is down or
-  redeploying.
-- The orchestrator has **no business HTTP API**. An internal ops endpoint (for example replaying
-  stuck outbox rows) may be added later if operations need it. It is not part of the registry
-  contract.
-- **Tables** live in **registry's existing Postgres schema**. Their **DDL goes in registry's
-  Liquibase changelog** (`registry-persistence/src/main/resources/liquibase/`, following
-  `185-validation-report.xml`). The orchestrator runs no migrations.
-  *Current practice:* registry's Liquibase changelog documents SQL changes, but the changes are
-  applied to each environment **by hand**. Every orchestrator round that needs schema changes
-  must therefore deliver the changeset and a note listing the manual SQL to apply per
-  environment. (Adopting Liquibase to apply changes automatically is encouraged, but outside this
-  project.)
-- **Only the orchestrator writes** workflow, step, command and report tables, and **registry only
-  reads** them. This is enforced with DB grants: `SELECT` for the registry role, and
-  `SELECT, INSERT, UPDATE` for the orchestrator role (as in changeset 188).
+- **Validation** (revised 2026-11-19): **`flow-orchestrator-ws`** is the user-facing validation
+  API (today's `/validation` paths, taken over from validator-ws). It turns requests into
+  **RabbitMQ commands** to the orchestrator engine (`flow-orchestrator-app`), which has no business
+  HTTP API of its own.
+- **Ingestion** (Phase C, unchanged for now): start, retry and rerun stay behind registry-ws's
+  existing secured endpoints (for example `PipelinesHistoryResource` `run/{datasetKey}`), which
+  will send the same commands, as `DefaultRegistryPipelinesHistoryTrackingService` already does
+  with `MessagePublisher`. Those endpoints may later move into `flow-orchestrator-ws` too.
+- Commands queue while the engine is down or redeploying. An internal ops endpoint (for example
+  replaying stuck outbox rows) may be added later if operations need it.
+- **Tables** live in their own Postgres **schema `orchestrator`** in the registry database
+  (decided 2026-11-19, replacing "registry's schema, registry changesets"). flow-orchestrator owns
+  the schema and its DDL: `db/` (`changelog.xml`,
+  `001-orchestrator-schema.sql`, `002-orchestrator-tables.sql`). The orchestrator runs no
+  migrations.
+  *Why:* a clean boundary. Registry is large, and the process-related registry-ws endpoints may
+  later move into an **orchestration-ws** that owns this schema; the schema could also move to its
+  own database then without touching registry's.
+  *Current practice:* like registry's Liquibase changelog, `db/changelog.xml` documents the SQL;
+  the changes are applied to each environment **by hand**. Every round that changes the schema
+  delivers the script and the list of manual SQL per environment.
+- **Only this repository's services write** the schema: the engine (`flow-orchestrator-app`)
+  writes the workflow, step, command, outbox and report tables; `flow-orchestrator-ws` writes the
+  validation tables (Round A). **Registry only reads.** Enforced with DB grants (`001-orchestrator-schema.sql`): the orchestrator role owns
+  the schema and its tables; registry has `USAGE` on the schema and `SELECT` on its tables through
+  default privileges, so new tables are readable without another grant. Registry reads with
+  schema-qualified SQL (`orchestrator.workflow_execution`); the orchestrator connects with
+  `orchestrator` as its current schema (`spring.datasource.hikari.schema`, `DB_SCHEMA`) and uses
+  unqualified names.
 - **Workers** receive a request, do the work, write artifacts (HDFS), and publish a completion.
   They do not touch workflow state.
 
-Consequence: an orchestrator change that touches tables needs a matching registry changeset and
-registry release. Rounds that change the schema list the registry changesets they need.
+Consequence: a schema change is released with the orchestrator, not with registry. Registry
+changes only when what it reads changes (Round A onwards); those reads are the contract a later
+orchestration-ws API would replace.
 
 ### 2a. Commands (Decided)
 
@@ -405,10 +620,10 @@ per-step input mapping in config, only when the first real join appears.
 
 ## 5. Persistence
 
-**Decided:** DDL in registry's Liquibase changelog, in registry's schema (section 2); the
+**Decided:** DDL in this repository (`db/`), in the `orchestrator` schema (section 2); the
 orchestrator runs no migrations. **Proposed:** Spring `JdbcClient` with explicit SQL and Spring
-transactions (no JPA, no MyBatis). Use one registry changeset file per orchestrator-owned table,
-written in portable SQL where possible so the H2 test mirror (section 8) stays simple.
+transactions (no JPA, no MyBatis). Write the table DDL
+in portable SQL where possible so the H2 test mirror (section 8) stays simple.
 
 ### Current state in validator-ws (verified)
 
@@ -450,9 +665,10 @@ read-modify-write a document, and registry reads status with plain `SELECT`s. Vo
 
 ### Tables
 
-**Decided and implemented in rounds 3 and 4:** registry changeset `189-orchestrator-tables`. The SQL is
-in `registry-persistence/src/main/resources/liquibase/189-orchestrator-tables.sql`, and the
-orchestrator's H2 test schema is a verbatim copy of it. There is no table prefix.
+**Decided and implemented in rounds 3 and 4:** the six tables, since 2026-11-19 in
+`db/002-orchestrator-tables.sql` (schema `orchestrator`, names schema-qualified in the script).
+The H2 tests run that same file; there is no copy. There is no table prefix. (They were registry
+changesets 189/190 before; those were never applied anywhere and are removed from registry.)
 
 - **`domain` is only on the aggregate root `workflow_execution`.** The other tables reach it
   through their foreign keys.
@@ -475,7 +691,7 @@ failed, was skipped or aborted; for a failed step the worker's diagnostic, for a
 example "Not run: VALIDATOR_VALIDATE_DWCDP failed") and on `workflow_execution` (why it ended, for
 example "VALIDATOR_VALIDATE_DWCDP failed: Archive not found"), plus the verdict `rejected`. They are
 meant for people, including a future frontend, and are copied into `WorkflowFinished`. Changeset
-189 had not been applied anywhere, so it was edited in place.
+The table script had not been applied anywhere, so it was edited in place.
 
 The SQL is portable: no enums or partial indexes; identity columns; `timestamp with time zone`.
 Step types and statuses are `varchar`, so a new `StepType` needs no `ALTER TYPE`. JSON is `text`
@@ -518,15 +734,18 @@ Guarantees:
 
 ### Schema changes to apply by hand
 
-Registry's Liquibase files document the SQL; each environment is changed by hand. In order:
+`db/changelog.xml` documents the SQL; each environment is changed by hand. In order:
 
-| Changeset | File | Notes |
-|---|---|---|
-| 189 | `liquibase/189-orchestrator-tables.sql` | Creates the six tables (including `workflow_report`). Run as the role that should own them. |
-| 190 | `liquibase/190-grant-orchestrator-tables.xml` | Grants: write for the orchestrator role, `SELECT` for registry. The role names are placeholders, so confirm them first. |
+| Step | File | Run as | Notes |
+|---|---|---|---|
+| 1 | `db/001-orchestrator-schema.sql` | A role that may create schemas | Creates schema `orchestrator` owned by the orchestrator role; `USAGE` and default `SELECT` for registry. PostgreSQL only. Role names are placeholders, so confirm them first. |
+| 2 | `db/002-orchestrator-tables.sql` | The orchestrator role | Creates the six tables (including `workflow_report`), owned by the orchestrator. If an admin ran it instead, apply the commented `OWNER TO` and `GRANT SELECT` lines at the end of the file. |
+
+The orchestrator's datasource keeps pointing at the registry database; set `DB_SCHEMA` only if the
+schema is named differently.
 
 Later, not part of Phase A: Phase B copies validator-ws `validation_report` rows into
-`workflow_report` (`validation_key` → `dataset_key`) when validator-ws merges into registry. Phase C
+`orchestrator.workflow_report` (`validation_key` → `dataset_key`) when validator-ws merges into registry. Phase C
 migrates registry 185 rows as `DWCDP_ANALYSIS`, points `DatasetValidationResource` at
 `workflow_report`, and drops 185/188 once the analyser no longer PUTs there.
 
@@ -550,7 +769,7 @@ PRIMARY KEY (dataset_key, attempt, report_type)
   `workflow_execution` does not fit its `run` column; reports outlive a run. The shared key format
   is the link. Cleanup (for example validator-ws's retention task) deletes reports explicitly.
 - **`report` is `jsonb`**, as in registry's changeset 185, so reports can be queried in SQL. H2
-  accepts the type, so the test schema stays a verbatim copy; only the bind expression differs
+  accepts the type, so the tests run the production script; only the bind expression differs
   (`JsonSql`: `CAST(:p AS jsonb)` in production, `:p FORMAT JSON` in tests).
 - **`comment`** is free text and nullable. When a report carries no comment the orchestrator writes
   the producing step and attempt (for example `VALIDATOR_VALIDATE_DWCDP attempt 2`). It is for
@@ -560,7 +779,7 @@ PRIMARY KEY (dataset_key, attempt, report_type)
 - **Reports are decoupled from executions and attempts**: new report kinds need no schema change.
 - **Writes are upserts** (update, then insert; portable to H2), keeping `created`. Repeated
   completion processing is safe; a concurrent insert of the same key is retried.
-- Only the orchestrator writes the table; registry reads it (changeset 190).
+- Only the orchestrator writes the table; registry reads it (grants in `db/001-orchestrator-schema.sql`).
 
 **Existing report tables (kept, migrated later).** Registry's changeset 185 `validation_report`
 (one `jsonb` report per dataset and attempt, PUT over HTTP by dwc-dp-analyser-service) stays
@@ -839,9 +1058,9 @@ or registry for workflow purposes.
 ### Testing (Decided: H2 + handwritten fakes)
 
 - JUnit 5 with handwritten fakes; no Mockito, no Testcontainers, no embedded Postgres.
-- Persistence tests run against **H2** using `src/test/resources/schema-h2.sql`. That file mirrors
-  the registry changesets for orchestrator-owned tables and is updated in the same change as the
-  registry changeset.
+- Persistence tests run against **H2** using the production `db/002-orchestrator-tables.sql` (the
+  JDBC URL creates the schema, as `001` does in PostgreSQL). `SchemaTest` checks that every table
+  is in `orchestrator` and that connections use it as their current schema.
 - Messaging is tested with in-memory fake publishers and consumers. That includes failure
   injection between commit, publish and ack.
 - Real RabbitMQ behaviour (publisher confirms, ack/nack, dead-lettering) and multi-instance

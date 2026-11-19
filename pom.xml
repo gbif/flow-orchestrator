@@ -24,6 +24,7 @@
     <module>flow-orchestrator-api</module>
     <module>flow-orchestrator-engine</module>
     <module>flow-orchestrator-app</module>
+    <module>flow-orchestrator-ws</module>
   </modules>
 
   <scm>

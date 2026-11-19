@@ -1,7 +1,7 @@
 # flow-orchestrator: local integration environment
 
 Runs the orchestrator (validation domain) against Postgres and RabbitMQ, optionally with the real
-DwC-DP analyser. Run the commands from `local-test/`.
+DwC-DP analyser and the validation web service (flow-orchestrator-ws). Run the commands from `local-test/`.
 
 Requirements: Podman with a Compose provider, [Task](https://taskfile.dev/), `curl`. No Python.
 
@@ -44,13 +44,31 @@ task status UUID=…
 `OUTCOME=FAILED` fails a step (the workflow ends `FAILED`). Without `task balancer` the requests
 are unroutable: the outbox keeps them and retries with backoff (`status` shows the attempts).
 
+## Through the validation API (flow-orchestrator-ws)
+
+The ws authenticates users against a GBIF API, so set `GBIF_API_URL` (for example UAT) and an app
+key in `.env`, and log in with a user of that API.
+
+```bash
+(cd .. && mvn package -DskipTests)
+task build && task build:ws && task up:ws
+curl -u USER:PASSWORD -F file=@my-datapackage.zip http://127.0.0.1:18081/validation
+curl -u USER:PASSWORD http://127.0.0.1:18081/validation/<key>
+```
+
+A DwC-DP upload starts the `validation-dwcdp` workflow with a `WorkflowCommand`; its status and
+steps in the response come from the workflow tables. Other formats send today's pipelines start
+message, which nothing consumes locally. If an older database volume exists, run `task down`
+first: Postgres only runs its init scripts on an empty volume.
+
 ## What runs where
 
 | Service | Port | Notes |
 |---|---|---|
-| Postgres | 127.0.0.1:15432 | Database `registry`; the orchestrator tables come from the test schema (a copy of registry changeset 189) |
+| Postgres | 127.0.0.1:15432 | Database `registry`, schema `orchestrator`, created from the repository's `db/` scripts. The orchestrator connects as role `orchestrator` (owner); `task status` reads as role `registry` (SELECT only) |
 | RabbitMQ | 127.0.0.1:5672, UI 15672 | `localtest`/`localtest` |
 | Orchestrator | 127.0.0.1:18080 | Actuator: `/actuator/health`, `/actuator/prometheus`; config `application-local.yml` |
+| flow-orchestrator-ws | 127.0.0.1:18081 | Profile `ws`. Connects as role `orchestrator_ws` (writes only the validation tables); validation store in `VALIDATION_STORE_DIR` (default `./store`) |
 | Analyser | — | Queue `dwcdp-validator-validation`, bound by the analyser to `orchestrator` / `validation.dwcdp.analysis` |
 
 `task down` removes everything, including the database volume.
