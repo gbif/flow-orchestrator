@@ -35,6 +35,29 @@ public final class Archives {
     return zip(name, files);
   }
 
+  /** A DwC-DP as published: descriptor at the root, the tables in a subfolder. */
+  public static MockMultipartFile dwcDpWithDataFolder(String name) throws IOException {
+    Map<String, String> files = new LinkedHashMap<>();
+    files.put(
+        "datapackage.json",
+        "{\"profile\":\"dwc-dp\",\"resources\":[{\"name\":\"occurrence\",\"path\":\"data/occurrence.csv\"}]}");
+    files.put("data/occurrence.csv", "occurrenceID,scientificName\n1,Puma concolor\n");
+    files.put("eml.xml", "<eml:eml xmlns:eml=\"https://eml.ecoinformatics.org/eml-2.2.0\"/>");
+    return zip(name, files);
+  }
+
+  /** A DwC-A with its data file in a subfolder, which the store flattens (validator-ws behaviour). */
+  public static MockMultipartFile dwcaWithDataFolder(String name) throws IOException {
+    Map<String, String> files = new LinkedHashMap<>();
+    files.put(
+        "meta.xml",
+        "<archive xmlns=\"http://rs.tdwg.org/dwc/text/\"><core rowType="
+            + "\"http://rs.tdwg.org/dwc/terms/Occurrence\"><files><location>occurrence.txt"
+            + "</location></files><id index=\"0\"/></core></archive>");
+    files.put("data/occurrence.txt", "occurrenceID\tscientificName\n1\tPuma concolor\n");
+    return zip(name, files);
+  }
+
   public static MockMultipartFile dwca(String name) throws IOException {
     Map<String, String> files = new LinkedHashMap<>();
     files.put(
@@ -50,7 +73,8 @@ public final class Archives {
     return zip(name, files);
   }
 
-  private static MockMultipartFile zip(String name, Map<String, String> files) throws IOException {
+  /** A zip of the given entries (name → content), in order. */
+  public static MockMultipartFile zip(String name, Map<String, String> files) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
       for (Map.Entry<String, String> file : files.entrySet()) {

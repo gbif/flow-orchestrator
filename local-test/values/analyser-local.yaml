@@ -1,0 +1,50 @@
+# The dwc-dp-analyser-service chart (from its own repository, unchanged) in the local minikube
+# environment. It binds its own queue to the orchestrator's request routing and replies on the
+# orchestrator's DwcDpValidationFinished routing key. It reads data packages from the shared
+# validation store, where flow-orchestrator-ws unzips uploads as <key>/datapackage.json.
+# Built inside minikube from the checkout ("task build:analyser"): the published image is amd64
+# only and fails on Apple Silicon with "exec format error".
+image:
+  repository: localhost
+  name: dwc-dp-analyser-service
+  tag: local
+  pullPolicy: Never
+
+rabbit:
+  host: rabbitmq
+  username: localtest
+  password: localtest
+  inputQueue: dwcdp-validator-validation
+  inputExchange: orchestrator
+  inputRoutingKey: validation.dwcdp.analysis
+  outputExchange: orchestrator
+  outputRoutingKey: validation.dwcdp.analysis.finished
+
+# Required by the chart; the analyser does not call registry in orchestrator mode.
+registry:
+  url: ""
+  username: local
+  password: local
+
+duckdb:
+  memory: 2GiB
+  tempDir: /data/workdir/.tmp
+
+yunikorn:
+  enabled: false
+
+volumes:
+  incoming:
+    persistentVolumeClaim:
+      claimName: validation-store
+      readOnly: true
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 100m
+    # The chart requests 20Gi, more than a default minikube node (20 GB disk) has; null removes it.
+    ephemeral-storage: null
+  limits:
+    memory: 3Gi
+    cpu: 2000m

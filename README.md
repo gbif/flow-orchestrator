@@ -12,8 +12,8 @@ The redesign is tracked in [docs/architecture.md](docs/architecture.md).
 **Status:** Round A (Phase B) implemented, not deployed. The engine runs the DwC-DP validation
 chain (rounds 1–5), and `flow-orchestrator-ws` takes over the validation API from
 pipelines-validator-ws: DwC-DP validations run through the engine, other formats keep their
-legacy path until Round B. Retry, rerun and recovery come later. A local environment is in
-[local-test/USAGE.md](local-test/USAGE.md).
+legacy path until Round B. Retry, rerun and recovery come later. A local environment on minikube
+is in [local-test/USAGE.md](local-test/USAGE.md).
 
 ## Modules
 
@@ -63,7 +63,9 @@ validation tables), sends commands to the engine's `validation` command queue, a
 shared validation store. Its settings keep validator-ws's names where they existed; see
 `flow-orchestrator-ws/src/main/resources/application.yml`. The main ones: `DB_URL`, `DB_USERNAME`,
 `DB_PASSWORD`; `STORE_PATH` (shared store the workers read); `GBIF_API_URL`, `GBIF_APP_KEY`,
-`GBIF_APP_SECRET` (remote authentication and user lookup for emails); `MAIL_HOST`, `MAIL_FROM`;
+`GBIF_APP_SECRET` (remote authentication and user lookup for emails); `GBIF_VALIDATOR_URL` and
+`GBIF_PORTAL_URL`, the base URLs for the links in the emails (required, no default; dev:
+`https://old.gbif-dev.org`); `MAIL_HOST`, `MAIL_FROM`;
 `CLB_API_URL`, `CLB_API_USER`, `CLB_API_PASSWORD`; `RABBIT_*`. The gateway route `/v1/validation*`
 points at it instead of validator-ws.
 
@@ -77,6 +79,24 @@ build/docker-image.sh docker.gbif.org/flow-orchestrator-ws:<version> '' flow-orc
 
 CI (`Jenkinsfile`) publishes `docker.gbif.org/flow-orchestrator:<version>` and
 `docker.gbif.org/flow-orchestrator-ws:<version>`.
+
+## Helm charts
+
+| Chart | Deploys |
+|---|---|
+| `helm/flow-orchestrator` | The engine. One release per domain, each with its own `orchestrator.domain` and `orchestrator.messagingPrefix`. The default `config` holds the `validation-dwcdp` workflow and its step routing. |
+| `helm/flow-orchestrator-ws` | The validation web service. Mount the shared validation store with `volumes.store`. |
+
+`values.yaml` has neutral defaults only, and `values-local.yaml` the settings for the local minikube
+environment. Environment values are kept in the deployment configuration, not in this repository.
+Credentials come from a Secret whose keys are the env var names (`secrets.existingSecret`); the
+chart refuses to render without one. Probes use Actuator's liveness and readiness groups, and
+`config` is mounted as an additional Spring `application.yml`.
+
+```bash
+helm upgrade --install flow-orchestrator-validation helm/flow-orchestrator -f <environment values>
+helm upgrade --install flow-orchestrator-ws helm/flow-orchestrator-ws -f <environment values>
+```
 
 ## Configuration
 

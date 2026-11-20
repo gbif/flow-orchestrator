@@ -17,13 +17,20 @@ import org.gbif.utils.file.CompressionUtil;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -59,6 +66,9 @@ public class FileStoreManager {
     private final CompletableFuture<DataFile> task;
   }
 
+  /** The descriptor that makes a zip a data package (DwC-DP). */
+  static final String DATA_PACKAGE_DESCRIPTOR = "datapackage.json";
+
   private final Path storePath;
 
   private final DownloadFileManager downloadFileManager;
@@ -87,7 +97,13 @@ public class FileStoreManager {
       // check if we have something to unzip
       String detectedMediaType = detectMediaType(dataFilePath);
       if (COMPRESS_CONTENT_TYPE.contains(detectedMediaType)) {
-        CompressionUtil.decompressFile(destinationFolder.toFile(), dataFilePath.toFile());
+        Optional<String> dataPackageRoot = dataPackageRoot(dataFilePath);
+        if (dataPackageRoot.isPresent()) {
+          unpackDataPackage(dataFilePath, dataPackageRoot.get(), destinationFolder);
+        } else {
+          // Other formats: flattened, as validator-ws has always done.
+          CompressionUtil.decompressFile(destinationFolder.toFile(), dataFilePath.toFile());
+        }
       }
 
       // from here we can decide to change the content type (e.g. zipped excel file)
@@ -189,6 +205,91 @@ public class FileStoreManager {
     if (file.exists()) {
       FileUtils.deleteDirectory(file);
     }
+  }
+
+  /**
+   * For a zip holding a data package (DwC-DP): the folder of its {@code datapackage.json}, as an
+   * entry-name prefix ({@code ""} at the root, {@code "pumas/"} when the package was zipped with a
+   * top folder). The shallowest descriptor wins. Empty for anything else, including a file that is
+   * not a readable zip (a tarball, for example).
+   */
+  static Optional<String> dataPackageRoot(Path file) {
+    try (ZipFile zip = new ZipFile(file.toFile())) {
+      return zip.stream()
+          .filter(e -> !e.isDirectory())
+          .map(e -> entryName(e))
+          .filter(name -> !isIgnoredEntry(name))
+          .filter(name -> baseName(name).equalsIgnoreCase(DATA_PACKAGE_DESCRIPTOR))
+          .min(Comparator.comparingInt((String name) -> name.split("/").length))
+          .map(name -> name.substring(0, name.length() - baseName(name).length()));
+    } catch (IOException e) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Unpacks a data package with its folders, the descriptor's folder becoming {@code target}, as
+   * the crawler does: the descriptor references its resources by relative path ({@code
+   * data/event.parquet}), and the analyser and pipelines resolve them from there. A top folder the
+   * package was zipped in is dropped; entries outside the descriptor's folder, {@code __MACOSX}
+   * and hidden files are skipped. An entry that would land outside {@code target} fails the
+   * upload.
+   */
+  static void unpackDataPackage(Path zipFile, String root, Path target) throws IOException {
+    Path base = target.toAbsolutePath().normalize();
+    int skipped = 0;
+    try (ZipFile zip = new ZipFile(zipFile.toFile())) {
+      for (ZipEntry entry : Collections.list(zip.entries())) {
+        String name = entryName(entry);
+        if (!name.startsWith(root) || isIgnoredEntry(name)) {
+          skipped++;
+          continue;
+        }
+        String relative = name.substring(root.length());
+        if (relative.isEmpty()) {
+          continue;
+        }
+        Path out = base.resolve(relative).normalize();
+        if (!out.startsWith(base)) {
+          throw new IOException("Zip entry outside the package folder: " + entry.getName());
+        }
+        if (out.equals(base)) {
+          continue;
+        }
+        if (entry.isDirectory()) {
+          Files.createDirectories(out);
+          continue;
+        }
+        Files.createDirectories(out.getParent());
+        try (InputStream in = zip.getInputStream(entry)) {
+          Files.copy(in, out, StandardCopyOption.REPLACE_EXISTING);
+        }
+      }
+    }
+    log.info(
+        "Unpacked data package {} from folder '{}' of the zip ({} entries skipped)",
+        zipFile.getFileName(),
+        root,
+        skipped);
+  }
+
+  private static String entryName(ZipEntry entry) {
+    return entry.getName().replace('\\', '/');
+  }
+
+  private static String baseName(String entryName) {
+    return entryName.substring(entryName.lastIndexOf('/') + 1);
+  }
+
+  /** {@code __MACOSX} resource forks and hidden files or folders, as gbif-common ignores them. */
+  private static boolean isIgnoredEntry(String entryName) {
+    for (String segment : entryName.split("/")) {
+      boolean hidden = segment.startsWith(".") && !segment.equals(".") && !segment.equals("..");
+      if (segment.equals("__MACOSX") || hidden) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

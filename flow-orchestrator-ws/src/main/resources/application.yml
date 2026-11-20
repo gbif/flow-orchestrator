@@ -40,10 +40,13 @@ gbif:
       appKey: ${GBIF_APP_KEY}
       appSecret: ${GBIF_APP_SECRET}
       wrapContent: false
+  # Links in the emails, per environment and without a default, so a deployment cannot send
+  # production links by accident. The base URL only: the templates add
+  # /tools/data-validator/<key> (dev: https://old.gbif-dev.org, prod: https://www.gbif.org).
   portal:
-    url: ${GBIF_PORTAL_URL:https://www.gbif.org}
+    url: ${GBIF_PORTAL_URL}
   validator:
-    url: ${GBIF_VALIDATOR_URL:https://www.gbif.org}
+    url: ${GBIF_VALIDATOR_URL}
   mail:
     from: ${MAIL_FROM:no-reply@gbif.org}
     bcc: ${MAIL_BCC:}

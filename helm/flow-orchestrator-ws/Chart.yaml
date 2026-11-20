@@ -1,0 +1,6 @@
+apiVersion: v2
+name: flow-orchestrator-ws
+description: GBIF flow-orchestrator-ws, the validation web service (formerly pipelines-validator-ws)
+type: application
+version: 0.1.0
+appVersion: "0.0.1-SNAPSHOT"

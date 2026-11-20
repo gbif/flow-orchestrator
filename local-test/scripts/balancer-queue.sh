@@ -3,6 +3,7 @@
 # so the orchestrator's pipelines requests are routable and can be inspected in the management UI.
 set -eu
 . "$(dirname "$0")/lib.sh"
+require_rabbit_api
 
 curl -sf -u "$RABBIT_AUTH" -H 'content-type: application/json' -X PUT \
   "$RABBIT_API/exchanges/%2F/occurrence" -d '{"type":"topic","durable":true}'

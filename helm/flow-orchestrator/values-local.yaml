@@ -1,0 +1,39 @@
+# Local values for minikube (local-test/, namespace flow-orchestrator-local). Not for any real
+# environment.
+image:
+  repository: localhost
+  name: flow-orchestrator
+  tag: local
+  pullPolicy: Never
+
+db:
+  url: jdbc:postgresql://postgres:5432/registry
+
+rabbit:
+  host: rabbitmq
+  username: localtest
+
+secrets:
+  values:
+    DB_PASSWORD: localtest
+    RABBIT_PASSWORD: localtest
+
+config:
+  orchestrator:
+    relay:
+      max-backoff: 30s
+
+log:
+  level: DEBUG
+
+waitFor:
+  - postgres:5432
+  - rabbitmq:5672
+
+resources:
+  requests:
+    memory: 384Mi
+    cpu: 100m
+  limits:
+    memory: 1Gi
+    cpu: 1000m

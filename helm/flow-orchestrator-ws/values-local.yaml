@@ -1,0 +1,55 @@
+# Local values for minikube (local-test/, namespace flow-orchestrator-local). Not for any real
+# environment. Nothing here talks to a GBIF environment: users are authenticated against the local
+# stub of the GBIF API (local-test/k8s/gbif-api-stub.yaml), emails go to Mailpit.
+image:
+  repository: localhost
+  name: flow-orchestrator-ws
+  tag: local
+  pullPolicy: Never
+
+db:
+  url: jdbc:postgresql://postgres:5432/registry
+
+rabbit:
+  host: rabbitmq
+  username: localtest
+
+secrets:
+  values:
+    DB_PASSWORD: localtest
+    RABBIT_PASSWORD: localtest
+    # The stub does not check app signatures.
+    GBIF_APP_SECRET: local
+
+settings:
+  GBIF_API_URL: http://gbif-api:8080/
+  GBIF_APP_KEY: local
+  # ChecklistBank also points at the stub (404), so nothing leaves the cluster.
+  CLB_API_URL: http://gbif-api:8080/clb/
+  # No data-validator UI locally: links in the emails go nowhere (.invalid never resolves).
+  GBIF_VALIDATOR_URL: https://data-validator.local.invalid
+  GBIF_PORTAL_URL: https://portal.local.invalid
+  MAIL_HOST: mailpit
+  MAIL_PORT: 1025
+  MAIL_FROM: validator@local.test
+
+volumes:
+  store:
+    persistentVolumeClaim:
+      claimName: validation-store
+
+log:
+  level: DEBUG
+
+waitFor:
+  - postgres:5432
+  - rabbitmq:5672
+  - gbif-api:8080
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 100m
+  limits:
+    memory: 1536Mi
+    cpu: 1000m

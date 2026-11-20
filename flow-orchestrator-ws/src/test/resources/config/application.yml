@@ -20,6 +20,10 @@ maxRunningValidationPerUser: 3
 gbif:
   api:
     url: http://localhost:1/
+  portal:
+    url: https://portal.test.invalid
+  validator:
+    url: https://validator.test.invalid
   ws:
     security:
       appKey: test

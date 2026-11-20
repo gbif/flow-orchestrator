@@ -78,6 +78,9 @@
     <gbif-api.version>2.4.30-FEATURE-ADD-DWCDP-DATA-VALIDATION-SNAPSHOT</gbif-api.version>
     <!-- Snapshot: needs the builders for confirms, mandatory and dead-lettering (2.1.16). -->
     <gbif-postal-service.version>2.1.16-FEATURE-ORCHESTRATION-SNAPSHOT</gbif-postal-service.version>
+    <!-- As pipelines, where validator-ws ran: postal-service brings 0.59, whose
+         CompressionUtil.decompressFile ignores its keepSubdirectories flag. -->
+    <gbif-common.version>0.60</gbif-common.version>
     <junit-jupiter.version>5.12.2</junit-jupiter.version>
     <net.logstash.logback.version>7.4</net.logstash.logback.version>
   </properties>
@@ -117,6 +120,11 @@
         <groupId>org.gbif.common</groupId>
         <artifactId>gbif-postal-service</artifactId>
         <version>${gbif-postal-service.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.gbif</groupId>
+        <artifactId>gbif-common</artifactId>
+        <version>${gbif-common.version}</version>
       </dependency>
       <dependency>
         <groupId>net.logstash.logback</groupId>

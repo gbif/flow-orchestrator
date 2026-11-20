@@ -1,0 +1,6 @@
+apiVersion: v2
+name: flow-orchestrator
+description: GBIF flow-orchestrator workflow engine (one release per domain)
+type: application
+version: 0.1.0
+appVersion: "0.0.1-SNAPSHOT"

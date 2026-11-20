@@ -1,13 +1,23 @@
 version: '3'
 
+# Local integration environment on minikube (namespace flow-orchestrator-local). See USAGE.md.
+
 dotenv:
   - .env
 
 vars:
-  COMPOSE: podman compose -f compose.yaml
+  NAMESPACE: flow-orchestrator-local
+  # Every kubectl and helm call is pinned to this context, never the kubeconfig's current one, so
+  # nothing lands in another cluster. minikube names it after its profile.
+  KUBE_CONTEXT: '{{.KUBE_CONTEXT | default "minikube"}}'
+  # The dwc-dp-analyser-service checkout (relative to local-test/): its image is built from it, and
+  # its chart is installed.
+  ANALYSER_DIR: '{{.ANALYSER_DIR | default "../../dwc-dp-analyser-service"}}'
+  ANALYSER_CHART: '{{.ANALYSER_CHART | default (print .ANALYSER_DIR "/helm")}}'
 
 env:
-  COMPOSE: '{{.COMPOSE}}'
+  NAMESPACE: '{{.NAMESPACE}}'
+  KUBE_CONTEXT: '{{.KUBE_CONTEXT}}'
 
 tasks:
   default:
@@ -16,95 +26,102 @@ tasks:
       - task --list
 
   build:
-    desc: Build the orchestrator image from the shaded JAR (run "mvn package" in the repository first)
-    dir: ..
+    desc: Build the engine image in minikube (run "mvn package" in the repository first)
     cmds:
-      - |
-        set -eu
-        set -- flow-orchestrator-app/target/*-shaded.jar
-        if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-          echo 'Expected exactly one flow-orchestrator-app/target/*-shaded.jar; run mvn package first.' >&2
-          exit 1
-        fi
-        podman build \
-          --build-arg BASE_REGISTRY=docker.gbif.org/third-party \
-          --build-arg "JAR_FILE=$1" \
-          -f docker/Dockerfile \
-          -t localhost/flow-orchestrator:test .
+      - scripts/build-image.sh .. 'flow-orchestrator-app/target/*-shaded.jar' docker/Dockerfile localhost/flow-orchestrator:local
 
   build:ws:
-    desc: Build the flow-orchestrator-ws image from its shaded JAR (run "mvn package" first)
-    dir: ..
+    desc: Build the flow-orchestrator-ws image in minikube (run "mvn package" first)
     cmds:
-      - |
-        set -eu
-        set -- flow-orchestrator-ws/target/*-shaded.jar
-        if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-          echo 'Expected exactly one flow-orchestrator-ws/target/*-shaded.jar; run mvn package first.' >&2
-          exit 1
-        fi
-        podman build \
-          --build-arg BASE_REGISTRY=docker.gbif.org/third-party \
-          --build-arg "JAR_FILE=$1" \
-          -f docker/Dockerfile \
-          -t localhost/flow-orchestrator-ws:test .
+      - scripts/build-image.sh .. 'flow-orchestrator-ws/target/*-shaded.jar' docker/Dockerfile localhost/flow-orchestrator-ws:local
 
-  up:ws:
-    desc: Start everything including flow-orchestrator-ws on 127.0.0.1:18081 (needs GBIF_API_URL and an app key in .env)
+  build:analyser:
+    desc: Build the dwc-dp-analyser-service image in minikube from its checkout (run "mvn package" there first)
     cmds:
-      - mkdir -p "${VALIDATION_STORE_DIR:-./store}"
-      - '{{.COMPOSE}} --profile ws up -d'
+      - scripts/build-image.sh '{{.ANALYSER_DIR}}' 'dwc-dp-analyser-service-app/target/*-runner.jar' Dockerfile localhost/dwc-dp-analyser-service:local
 
   up:
-    desc: Start Postgres, RabbitMQ and the orchestrator
-    cmds:
-      - '{{.COMPOSE}} up -d'
-
-  up:analyser:
-    desc: Start everything including the real analyser (needs DATAPACKAGES_DIR and DWCDP_WORKDIR in .env)
+    desc: Deploy Postgres, RabbitMQ, the GBIF API stub, Mailpit, the engine, the analyser and the ws
     cmds:
       - |
         set -eu
-        : "${DATAPACKAGES_DIR:?Set DATAPACKAGES_DIR in .env}"
-        : "${DWCDP_WORKDIR:?Set DWCDP_WORKDIR in .env}"
-        case "$DATAPACKAGES_DIR" in /*) ;; *) echo 'DATAPACKAGES_DIR must be absolute' >&2; exit 1 ;; esac
-        case "$DWCDP_WORKDIR" in /*) ;; *) echo 'DWCDP_WORKDIR must be absolute' >&2; exit 1 ;; esac
-        [ -d "$DATAPACKAGES_DIR" ] || { echo "Datapackage directory not found: $DATAPACKAGES_DIR" >&2; exit 1; }
-        mkdir -p "$DWCDP_WORKDIR"
-        {{.COMPOSE}} --profile analyser up -d
+        minikube -p "$KUBE_CONTEXT" status >/dev/null 2>&1 || { echo 'minikube is not running: minikube start --memory 8g' >&2; exit 1; }
+        [ -d '{{.ANALYSER_CHART}}' ] || { echo 'Analyser chart not found at {{.ANALYSER_CHART}}; set ANALYSER_DIR in .env' >&2; exit 1; }
+        kubectl --context "$KUBE_CONTEXT" create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f -
+        # The shared store, writable for the non-root images (a hostPath ignores fsGroup).
+        minikube -p "$KUBE_CONTEXT" ssh -- 'sudo mkdir -p /data/validation-store && sudo chmod 0777 /data/validation-store'
+        # The schema scripts for the Postgres init, as in the real environments.
+        kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap orchestrator-db \
+          --from-file=db/00-roles.sql --from-file=db/20-orchestrator-tables.sh \
+          --from-file=../db/001-orchestrator-schema.sql --from-file=../db/002-orchestrator-tables.sql \
+          --from-file=../db/003-validation-tables.sql --from-file=../db/004-validation-grants.sql \
+          --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" apply -f -
+        kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" apply -f k8s/
+        for d in postgres rabbitmq gbif-api mailpit; do
+          kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" rollout status "deploy/$d" --timeout=300s
+        done
+        # The engine first: it declares the orchestrator exchange the analyser binds to.
+        helm --kube-context "$KUBE_CONTEXT" upgrade --install flow-orchestrator ../helm/flow-orchestrator -n "$NAMESPACE" \
+          -f ../helm/flow-orchestrator/values-local.yaml --wait --timeout 5m
+        helm --kube-context "$KUBE_CONTEXT" upgrade --install dwc-dp-analyser '{{.ANALYSER_CHART}}' -n "$NAMESPACE" \
+          -f values/analyser-local.yaml --wait --timeout 5m
+        helm --kube-context "$KUBE_CONTEXT" upgrade --install flow-orchestrator-ws ../helm/flow-orchestrator-ws -n "$NAMESPACE" \
+          -f ../helm/flow-orchestrator-ws/values-local.yaml --wait --timeout 5m
+        kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get pods
+
+  forward:
+    desc: Port-forward to 127.0.0.1 (ws 18081, engine 18080, Mailpit 18025, RabbitMQ 5672/15672, Postgres 15432); keep it running
+    cmds:
+      - scripts/forward.sh
 
   balancer:
-    desc: Bind a stand-in queue for the pipelines balancer, so pipelines requests are routable
+    desc: Bind a stand-in queue for the pipelines balancer, so pipelines requests are routable (needs task forward)
     cmds:
       - scripts/balancer-queue.sh
 
+  datapackage:
+    desc: Put a DwC-DP zip in the shared store for an engine-only trigger (UUID, FILE, ATTEMPT=1)
+    requires:
+      vars: [UUID, FILE]
+    cmds:
+      - |
+        set -eu
+        dir="/data/validation-store/{{.UUID}}/{{.UUID}}.{{.ATTEMPT | default "1"}}"
+        minikube -p "$KUBE_CONTEXT" ssh -- "sudo mkdir -p '$dir' && sudo chmod -R 0777 '/data/validation-store/{{.UUID}}'"
+        minikube -p "$KUBE_CONTEXT" cp '{{.FILE}}' "minikube:$dir/{{.UUID}}.{{.ATTEMPT | default "1"}}.zip"
+        echo "Copied to $dir"
+
   trigger:
-    desc: Start a validation (CHAIN=analysis by default, or full) for a datapackage UUID
+    desc: Start a DwC-DP validation through the engine only, as the ws does (UUID, ATTEMPT=1; needs task forward)
     requires:
       vars: [UUID]
     cmds:
-      - scripts/trigger.sh '{{.UUID}}' '{{.ATTEMPT | default "1"}}' '{{.CHAIN | default "analysis"}}'
+      - scripts/trigger.sh '{{.UUID}}' '{{.ATTEMPT | default "1"}}'
 
   complete:
-    desc: Simulate a pipelines step's reply (OUTCOME=SUCCEEDED, FAILED, or INVALID for identifiers)
+    desc: Simulate a pipelines step's reply (OUTCOME=SUCCEEDED, FAILED, or INVALID for identifiers; needs task forward)
     requires:
       vars: [UUID, STEP]
     cmds:
       - scripts/complete.sh '{{.UUID}}' '{{.STEP}}' '{{.OUTCOME | default "SUCCEEDED"}}' '{{.ATTEMPT | default "1"}}'
 
   status:
-    desc: Show the workflow, steps, reports and unpublished outbox rows of a dataset
+    desc: Show the workflow, steps, reports and unpublished outbox rows of a dataset or validation key
     requires:
       vars: [UUID]
     cmds:
       - scripts/status.sh '{{.UUID}}'
 
   logs:
-    desc: Follow orchestrator and analyser logs
+    desc: Follow the engine, ws and analyser logs
     cmds:
-      - '{{.COMPOSE}} --profile analyser logs -f --tail=100 orchestrator analyser'
+      - >-
+        kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" logs -f --tail=100 --prefix --max-log-requests=10
+        -l 'app.kubernetes.io/instance in (flow-orchestrator,flow-orchestrator-ws,dwc-dp-analyser)'
 
   down:
-    desc: Stop and remove the environment, including the database
+    desc: Remove the environment, including the database and the shared store
     cmds:
-      - '{{.COMPOSE}} --profile analyser down -v'
+      - kubectl --context "$KUBE_CONTEXT" delete namespace "$NAMESPACE" --ignore-not-found --wait
+      - kubectl --context "$KUBE_CONTEXT" delete pv flow-orchestrator-local-store --ignore-not-found
+      - minikube -p "$KUBE_CONTEXT" ssh -- 'sudo rm -rf /data/validation-store'

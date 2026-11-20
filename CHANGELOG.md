@@ -2,6 +2,27 @@
 
 ## 0.0.1 (unreleased)
 
+- Helm charts `helm/flow-orchestrator` (engine, one release per domain) and
+  `helm/flow-orchestrator-ws`: Actuator startup, liveness and readiness probes; credentials from
+  a Secret; Spring `config` from values. The engine's default values hold the `validation-dwcdp`
+  workflow. Repository values are defaults and local only.
+- `local-test/` moves from Compose to minikube: the charts, the analyser's chart, Postgres and
+  RabbitMQ manifests, and a store shared by the ws and the analyser, so an upload runs end to end.
+  The local workflows match `{fileFormat: DWCDP}` like production (`CHAIN` is gone); new tasks
+  `forward` and `datapackage`.
+  Fully local: a GBIF API stub (WireMock) authenticates the local users `alice`, `bob` and
+  `admin` and answers the user lookup, and Mailpit catches the emails; no GBIF app key needed.
+- DwC-DP uploads keep their folders in the validation store (`data/event.parquet` as the
+  descriptor references it), as the crawler does. The folder of the shallowest
+  `datapackage.json` becomes the validation's folder, so a top folder the package was zipped in
+  is dropped; `__MACOSX`, hidden files and entries outside that folder are skipped, and an entry
+  escaping it fails the upload. Other formats stay flattened, as validator-ws did for every
+  upload. gbif-common is pinned to 0.60, as pipelines (postal-service brought 0.59, which
+  ignores `decompressFile`'s keep-subdirectories flag).
+- `GBIF_VALIDATOR_URL` and `GBIF_PORTAL_URL` (the email links) have no default any more; they used
+  to fall back to `https://www.gbif.org`, sending production links from test environments.
+- Test fix: `ValidationServiceTest` waits up to 30s, because the first EML parse in a JVM can
+  take more than 10s.
 - Round A: new module `flow-orchestrator-ws`, the validation web service taken over from
   pipelines-validator-ws (from the security-fixed branch `fix/validator-ownership-and-upload`).
   Same `/validation` paths and JSON. DwC-DP validations start with a `WorkflowCommand`; their

@@ -216,6 +216,12 @@ Source: validator-ws (`pipelines-validator-ws`, `validator-api`, `validator-mail
   - `NOT_FOUND` returns 404.
   - XML uploads detected as `XML`.
   - Default ordering for the listing (`created DESC`).
+  - DwC-DP uploads keep their folders in the store (added 2026-11-20 after the first minikube
+    run). validator-ws flattened every upload, so `data/*.parquet` resources were not where the
+    descriptor said; flattening probably existed to cope with a top folder in the zip. Now the
+    folder of the shallowest `datapackage.json` becomes the validation's folder (a wrapping
+    folder is dropped, as the crawler's unpacking does for a single root folder). Other formats
+    stay flattened until Round B, which can apply the same rule to `meta.xml` for DwC-A.
 - **Logged, not fixed:**
   - `MAX_RUNNING_VALIDATIONS` stays 420.
   - Search dates still snap to month boundaries.
@@ -229,7 +235,20 @@ Source: validator-ws (`pipelines-validator-ws`, `validator-api`, `validator-mail
 - The ws mounts the shared validation store (`storePath`), as validator-ws does today.
 - validator-ws is switched off after the data copy. Its code in pipelines is deleted in Round B,
   with the legacy reporting.
-- local-test gains the ws service.
+- **Helm charts in this repository** (decided 2026-11-20): `helm/flow-orchestrator` (the engine,
+  one release per domain) and `helm/flow-orchestrator-ws`, following dwc-dp-analyser-service's
+  chart. Their `values.yaml` holds neutral defaults (the engine's default `config` carries the
+  `validation-dwcdp` workflow and step routing) and `values-local.yaml` the minikube settings.
+  Environment values live in the private deployment configuration, not here. Probes use
+  Actuator's liveness and readiness groups; Spring settings beyond the env vars come from
+  `config`, mounted as an additional `application.yml`.
+- **local-test moves to minikube** (decided 2026-11-20, replaces Compose): the charts above, the
+  analyser's own chart, plain manifests for Postgres and RabbitMQ, and a hostPath store shared by
+  the ws and the analyser, so an upload runs end to end. Workflows match `{fileFormat: DWCDP}`
+  only, as in production (the local `chain` parameter is gone).
+  It talks to no GBIF environment: a WireMock stub answers the two GBIF API calls the ws makes
+  (`POST /user/auth/basic` and `GET /admin/user/{name}`) for local users, and Mailpit catches the
+  emails.
 
 **Survey notes (validator-ws, 2026-11-19)**
 - Its own database (`validation.datasource.*`, requires `testdb=false`).
@@ -302,7 +321,7 @@ Switch both to releases when they are cut. Its Jenkinsfile gained the feature-br
 - Outputs for later steps: the record counts and `datasetType`.
 - To-verbatim in orchestrator mode ignores the message flags and reads the staged counts instead.
 
-**local-test:** Compose with Postgres (the `db/` scripts, schema `orchestrator`), RabbitMQ, the orchestrator
+**local-test** (moved to minikube in Round A, see there): Compose with Postgres (the `db/` scripts, schema `orchestrator`), RabbitMQ, the orchestrator
 and the real analyser, plus a trigger that publishes a `WorkflowCommand`. Implemented as `local-test/` (USAGE.md):
 the pipelines steps can be simulated with `task complete`.
 
@@ -1064,7 +1083,7 @@ or registry for workflow purposes.
 - Messaging is tested with in-memory fake publishers and consumers. That includes failure
   injection between commit, publish and ack.
 - Real RabbitMQ behaviour (publisher confirms, ack/nack, dead-lettering) and multi-instance
-  behaviour are verified in the Compose `local-test` environment, not in `mvn verify`.
+  behaviour are verified in the `local-test` environment (minikube), not in `mvn verify`.
 
 Caveats and how the design handles them:
 
@@ -1072,7 +1091,7 @@ Caveats and how the design handles them:
 |---|---|
 | No Postgres `jsonb` type or operators | Map JSON columns as text or H2 `JSON` in the test schema. Orchestrator queries never use jsonb operators; JSON is parsed in Java. |
 | `FOR UPDATE SKIP LOCKED` semantics differ | Outbox correctness does not depend on it (section 6). |
-| Concurrency under real load | The optimistic version check behaves the same on H2, and conflict handling is tested with a repository that forces a conflict. Real multi-instance behaviour is checked in Compose. |
+| Concurrency under real load | The optimistic version check behaves the same on H2, and conflict handling is tested with a repository that forces a conflict. Real multi-instance behaviour is checked in `local-test`. |
 | Registry changesets are Postgres SQL | Keep orchestrator changesets portable, and keep the H2 mirror alongside. |
 
 ## 9. Validation workflows today (verified inventory, pipelines `feature/dwcdp-data-validator`)

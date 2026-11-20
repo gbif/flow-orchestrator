@@ -1,0 +1,126 @@
+# Default values for the flow-orchestrator engine. These are neutral defaults only: environment
+# values (hosts, credentials, sizing) live in the deployment configuration outside this repository.
+# local-test/ has the values for minikube.
+#
+# One release per domain: a VALIDATION instance now, an INGESTION instance later (Phase C), each
+# with its own messaging prefix.
+
+replicaCount: 1
+
+image:
+  repository: docker.gbif.org
+  name: flow-orchestrator
+  tag: latest
+  pullPolicy: Always
+
+# Read by the image's entrypoint.
+jvmOptions: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Xms128m"
+
+orchestrator:
+  # The single domain this instance processes: VALIDATION or INGESTION.
+  domain: VALIDATION
+  # Prefix of this instance's queue and routing-key names (for example validation.command).
+  messagingPrefix: validation
+  messagingEnabled: true
+
+# Registry PostgreSQL database; the orchestrator schema is applied by hand from db/.
+db:
+  url: jdbc:postgresql://localhost:5432/registry
+  username: orchestrator
+  schema: orchestrator
+
+rabbit:
+  host: localhost
+  port: 5672
+  vhost: /
+  username: guest
+
+# Env vars taken from a Secret: DB_PASSWORD and RABBIT_PASSWORD.
+# Either name an existing Secret with those keys:
+#   existingSecret: flow-orchestrator-validation
+# or let the chart create one from inline values (local use):
+#   values:
+#     DB_PASSWORD: ...
+#     RABBIT_PASSWORD: ...
+secrets:
+  existingSecret: ""
+  values: {}
+
+# Spring configuration added on top of the packaged application.yml (mounted as
+# /app/config/application.yml). The workflow definitions and step routing belong here.
+# Node keys are gbif-api StepType names; every step used in a workflow needs request routing.
+config:
+  orchestrator:
+    workflows:
+      # The DwC-DP validation chain. Uploads through flow-orchestrator-ws start it with
+      # {fileFormat: DWCDP}.
+      validation-dwcdp:
+        domain: VALIDATION
+        match:
+          fileFormat: DWCDP
+        nodes:
+          - step: VALIDATOR_VALIDATE_DWCDP
+          - step: VALIDATOR_DWCDP_STAGE
+            dependencies: [VALIDATOR_VALIDATE_DWCDP]
+          - step: VALIDATOR_DWCDP_TO_VERBATIM
+            dependencies: [VALIDATOR_DWCDP_STAGE]
+          - step: VALIDATOR_VERBATIM_TO_IDENTIFIER
+            dependencies: [VALIDATOR_DWCDP_TO_VERBATIM]
+          - step: VALIDATOR_VERBATIM_TO_INTERPRETED
+            dependencies: [VALIDATOR_VERBATIM_TO_IDENTIFIER]
+          - step: VALIDATOR_COLLECT_METRICS
+            dependencies: [VALIDATOR_VERBATIM_TO_INTERPRETED]
+    steps:
+      # The dwc-dp-analyser-service binds its own queue to this exchange and routing key.
+      VALIDATOR_VALIDATE_DWCDP:
+        request: { exchange: orchestrator, routing-key: validation.dwcdp.analysis }
+      # The pipelines jobs go through the balancer (standalone or distributed).
+      VALIDATOR_DWCDP_STAGE:
+        request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+      VALIDATOR_DWCDP_TO_VERBATIM:
+        request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+      VALIDATOR_VERBATIM_TO_IDENTIFIER:
+        request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+      VALIDATOR_VERBATIM_TO_INTERPRETED:
+        request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+      VALIDATOR_COLLECT_METRICS:
+        request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
+
+# Level of the org.gbif.orchestrator loggers.
+log:
+  level: INFO
+
+# Extra env vars, as a list of Kubernetes EnvVar objects.
+extraEnv: []
+
+# Init containers wait until these host:port pairs accept connections (busybox nc), so a fresh
+# environment does not crash-loop. Empty: no waiting.
+waitFor: []
+#  - postgres:5432
+#  - rabbitmq:5672
+
+service:
+  port: 8080
+
+probes:
+  startup:
+    periodSeconds: 5
+    failureThreshold: 60
+  liveness:
+    periodSeconds: 20
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 10
+    failureThreshold: 3
+
+podSecurityContext: {}
+containerSecurityContext: {}
+nodeSelector: {}
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 250m
+  limits:
+    memory: 1Gi
+    cpu: 1000m

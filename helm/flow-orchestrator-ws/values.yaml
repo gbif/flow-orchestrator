@@ -1,0 +1,111 @@
+# Default values for flow-orchestrator-ws, the validation web service. These are neutral defaults
+# only: environment values (hosts, credentials, sizing) live in the deployment configuration outside
+# this repository. local-test/ has the values for minikube.
+
+replicaCount: 1
+
+image:
+  repository: docker.gbif.org
+  name: flow-orchestrator-ws
+  tag: latest
+  pullPolicy: Always
+
+# Read by the image's entrypoint.
+jvmOptions: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Xms256m"
+
+# Registry PostgreSQL database, orchestrator schema. Connect as the ws role (db/004): it writes
+# only the validation tables.
+db:
+  url: jdbc:postgresql://localhost:5432/registry
+  username: orchestrator_ws
+  schema: orchestrator
+
+rabbit:
+  host: localhost
+  port: 5672
+  vhost: /
+  username: guest
+
+# Env vars taken from a Secret: DB_PASSWORD, RABBIT_PASSWORD and GBIF_APP_SECRET are required;
+# CLB_API_PASSWORD and SPRING_MAIL_PASSWORD are optional.
+# Either name an existing Secret with those keys:
+#   existingSecret: flow-orchestrator-ws
+# or let the chart create one from inline values (local use):
+#   values:
+#     DB_PASSWORD: ...
+secrets:
+  existingSecret: ""
+  values: {}
+
+# Plain settings, as env vars of the packaged application.yml (validator-ws's names where they
+# existed). Empty values are left out, so the application default applies. Required, without a
+# default: GBIF_API_URL, GBIF_APP_KEY, and the base URLs for the email links GBIF_VALIDATOR_URL and
+# GBIF_PORTAL_URL (dev: https://old.gbif-dev.org; the templates add /tools/data-validator/<key>).
+settings:
+  GBIF_API_URL: ""
+  GBIF_APP_KEY: ""
+  GBIF_PORTAL_URL: ""
+  GBIF_VALIDATOR_URL: ""
+  MAIL_HOST: ""
+  MAIL_PORT: ""
+  MAIL_FROM: ""
+  MAIL_BCC: ""
+  CLB_API_URL: ""
+  CLB_API_USER: ""
+  CLB_CLEANER_CRON: ""
+  CLB_CLEANER_HOURS_OLD: ""
+  RETENTION_CRON: ""
+  RETENTION_KEEP_DAYS: ""
+  MAX_RUNNING_VALIDATIONS_PER_USER: ""
+  UPLOAD_MAX_SIZE: ""
+  VALIDATION_URL_ALLOWED_PRIVATE_HOSTS: ""
+  ORCHESTRATOR_WS_MESSAGING_ENABLED: ""
+
+# Spring configuration added on top of the packaged application.yml (mounted as
+# /app/config/application.yml), for anything without an env var.
+config: {}
+
+# The shared validation store, mounted at /data/store (STORE_PATH). The pipelines workers and the
+# dwc-dp-analyser-service read <store>/<validationKey>/. A Kubernetes volume source, for example
+#   persistentVolumeClaim: { claimName: validation-store }
+# Default: emptyDir (nothing else can read it).
+volumes:
+  store: {}
+  # Multipart uploads are written here before they move to the store.
+  upload: {}
+
+log:
+  level: INFO
+
+# Extra env vars, as a list of Kubernetes EnvVar objects.
+extraEnv: []
+
+# Init containers wait until these host:port pairs accept connections (busybox nc). Empty: no
+# waiting.
+waitFor: []
+
+service:
+  port: 8080
+
+probes:
+  startup:
+    periodSeconds: 5
+    failureThreshold: 60
+  liveness:
+    periodSeconds: 20
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 10
+    failureThreshold: 3
+
+podSecurityContext: {}
+containerSecurityContext: {}
+nodeSelector: {}
+
+resources:
+  requests:
+    memory: 768Mi
+    cpu: 250m
+  limits:
+    memory: 2Gi
+    cpu: 1000m

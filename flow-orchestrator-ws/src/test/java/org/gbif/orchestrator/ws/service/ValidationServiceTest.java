@@ -358,7 +358,8 @@ class ValidationServiceTest {
   }
 
   private Validation await(UUID key, Predicate<Validation> condition) throws InterruptedException {
-    Instant deadline = Instant.now().plus(Duration.ofSeconds(10));
+    // Generous: the first EML parse in a JVM (gbif-metadata, gbif-common parsers) can take >10s.
+    Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
     while (Instant.now().isBefore(deadline)) {
       Validation v = validations.get(key).orElseThrow();
       if (condition.test(v)) {

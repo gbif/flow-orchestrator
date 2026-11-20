@@ -1,0 +1,30 @@
+# The shared validation store: flow-orchestrator-ws writes <key>/ here, the analyser reads it.
+# A hostPath on the minikube node (minikube keeps /data across restarts); "task up" creates the
+# directory writable for the non-root images, "task down" clears it. Single node, so ReadWriteOnce
+# still lets both pods mount it.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: flow-orchestrator-local-store
+spec:
+  capacity: { storage: 10Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: flow-orchestrator-local
+    name: validation-store
+  hostPath:
+    path: /data/validation-store
+    type: Directory
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: validation-store
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  volumeName: flow-orchestrator-local-store
+  resources:
+    requests: { storage: 10Gi }

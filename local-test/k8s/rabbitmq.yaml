@@ -1,0 +1,56 @@
+# RabbitMQ for the local environment, with the management UI and API (localtest/localtest).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  labels: { app: rabbitmq }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: rabbitmq }
+  template:
+    metadata:
+      labels: { app: rabbitmq }
+    spec:
+      # The image declares /var/lib/rabbitmq as a volume. Some runtimes (containerd in minikube)
+      # create it owned by root, and RabbitMQ, running as the rabbitmq user, then cannot read or
+      # write its Erlang cookie (eacces). An explicit data volume, handed to rabbitmq by name.
+      initContainers:
+        - name: data-ownership
+          image: docker.io/library/rabbitmq:3.13-management-alpine
+          command: ["sh", "-c", "chown -R rabbitmq:rabbitmq /var/lib/rabbitmq"]
+          securityContext: { runAsUser: 0 }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/rabbitmq }
+      containers:
+        - name: rabbitmq
+          image: docker.io/library/rabbitmq:3.13-management-alpine
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/rabbitmq }
+          env:
+            - { name: RABBITMQ_DEFAULT_USER, value: localtest }
+            - { name: RABBITMQ_DEFAULT_PASS, value: localtest }
+          ports:
+            - { name: amqp, containerPort: 5672 }
+            - { name: management, containerPort: 15672 }
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            # The CLI starts an Erlang VM per call, which takes several seconds on a small VM.
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 20
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  selector: { app: rabbitmq }
+  ports:
+    - { name: amqp, port: 5672, targetPort: amqp }
+    - { name: management, port: 15672, targetPort: management }
