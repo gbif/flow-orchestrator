@@ -20,7 +20,7 @@
 
   <properties>
     <gbif-common-ws.version>2.1.4</gbif-common-ws.version>
-    <gbif-eml-validation.version>1.0.0-SNAPSHOT</gbif-eml-validation.version>
+    <gbif-eml-validation.version>1.0.0</gbif-eml-validation.version>
     <gbif-dna.version>1.3</gbif-dna.version>
     <apache-tika.version>3.2.3</apache-tika.version>
     <commons-io.version>2.21.0</commons-io.version>
