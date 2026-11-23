@@ -20,14 +20,18 @@ import org.gbif.common.messaging.api.messages.PipelinesChecklistValidatorMessage
 import org.gbif.eml.validation.ArchiveMetadata;
 import org.gbif.metadata.eml.parse.DatasetEmlParser;
 import org.gbif.orchestrator.api.event.WorkflowFinished;
+import org.gbif.orchestrator.api.json.OrchestratorJson;
+import org.gbif.orchestrator.ws.api.FileFormat;
 import org.gbif.orchestrator.ws.api.Validation;
 import org.gbif.orchestrator.ws.api.Validation.Status;
 import org.gbif.orchestrator.ws.api.ValidationRequest;
 import org.gbif.orchestrator.ws.api.ValidationSearchRequest;
+import org.gbif.orchestrator.ws.file.ArchiveCoreType;
 import org.gbif.orchestrator.ws.file.DataFile;
 import org.gbif.orchestrator.ws.file.FileStoreManager;
 import org.gbif.orchestrator.ws.file.UnsupportedMediaTypeException;
 import org.gbif.orchestrator.ws.mail.ValidatorEmailService;
+import org.gbif.orchestrator.ws.messaging.ChecklistbankRequest;
 import org.gbif.orchestrator.ws.messaging.Messages;
 import org.gbif.orchestrator.ws.persistence.ValidationRepository;
 import org.gbif.ws.security.GbifUserPrincipal;
@@ -39,8 +43,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 
@@ -53,7 +57,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import static org.gbif.orchestrator.ws.service.ValidationFactory.metricsSubmitError;
 import static org.gbif.orchestrator.ws.service.ValidationFactory.newValidationInstance;
@@ -76,12 +84,14 @@ import static org.gbif.ws.security.UserRoles.APP_ROLE;
 public class ValidationServiceImpl {
 
   private static final Logger LOG = LoggerFactory.getLogger(ValidationServiceImpl.class);
+  private static final TypeReference<Map<String, Object>> HEADER_MAP = new TypeReference<>() {};
+  private static final String WAIT_HEADER = "header";
+  private static final String PENDING_IMPORT = "pendingImport";
 
   private final FileStoreManager fileStoreManager;
   private final ValidationRepository validations;
   private final Messages messages;
   private final ValidatorEmailService emailService;
-  private final StepResolverService stepResolverService;
   private final ValidationMessageService starter;
   private final WorkflowStatusComposer composer;
   private final ErrorMapper errorMapper;
@@ -93,7 +103,6 @@ public class ValidationServiceImpl {
       ValidationRepository validations,
       Messages messages,
       ValidatorEmailService emailService,
-      StepResolverService stepResolverService,
       ValidationMessageService starter,
       WorkflowStatusComposer composer,
       ErrorMapper errorMapper,
@@ -103,7 +112,6 @@ public class ValidationServiceImpl {
     this.validations = validations;
     this.messages = messages;
     this.emailService = emailService;
-    this.stepResolverService = stepResolverService;
     this.starter = starter;
     this.composer = composer;
     this.errorMapper = errorMapper;
@@ -294,7 +302,118 @@ public class ValidationServiceImpl {
     fileStoreManager.deleteIfExist(key.toString());
   }
 
-  /** ChecklistBank's callback: hands the import to the checklist workers (legacy path). */
+  // ---------------------------------------------------------------------------------------------
+  // ChecklistBank
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * The engine's VALIDATOR_CHECKLISTBANK request: the archive validator submitted the checklist to
+   * ChecklistBank. Records the wait (the submitted dataset and the step's header) so the
+   * ChecklistBank callback, or the poller, can hand the import to the checklist validator. If
+   * ChecklistBank already called back (it was faster than this request), the import it sent is
+   * handed over now. A validation that was cancelled or deleted meanwhile is left alone.
+   */
+  public void awaitChecklistbank(ChecklistbankRequest request) {
+    UUID key = request.header().datasetKey();
+    Optional<Validation> found = validations.get(key);
+    if (found.isEmpty()) {
+      LOG.warn("ChecklistBank step for unknown validation {}", key);
+      return;
+    }
+    Validation validation = found.get();
+    Optional<JsonNode> early = pendingImport(validation);
+    validation.setClbDatasetKey(Math.toIntExact(request.clbDatasetKey()));
+    validation.setClbValidationMessage(toJson(request));
+    validation.setStatus(Status.WAITING_FOR_CHECKLISTBANK);
+    if (validations.updateIfExecuting(validation) == 0) {
+      LOG.info("Validation {} is not executing anymore, not waiting for ChecklistBank", key);
+      return;
+    }
+    LOG.info("Validation {} waits for ChecklistBank dataset {}", key, request.clbDatasetKey());
+    if (early.isPresent()) {
+      try {
+        forwardChecklistImport(validation, request, text(early.get()));
+      } catch (Exception e) {
+        // Still waiting: the poller hands the import over later.
+        LOG.error("Could not hand the early ChecklistBank import of {} over", key, e);
+      }
+    }
+  }
+
+  /** The orchestrated ChecklistBank wait recorded for the validation, if any. */
+  public Optional<ChecklistbankRequest> checklistbankWait(Validation validation) {
+    return storedClb(validation)
+        .filter(node -> node.path(WAIT_HEADER).isObject())
+        .flatMap(
+            node -> {
+              try {
+                return Optional.of(
+                    OrchestratorJson.mapper().treeToValue(node, ChecklistbankRequest.class));
+              } catch (Exception e) {
+                LOG.warn("Unreadable ChecklistBank wait of validation {}", validation.getKey(), e);
+                return Optional.empty();
+              }
+            });
+  }
+
+  /** An import ChecklistBank sent before the wait was recorded (JSON null if it sent none). */
+  private Optional<JsonNode> pendingImport(Validation validation) {
+    return storedClb(validation)
+        .filter(node -> node.has(PENDING_IMPORT))
+        .map(node -> node.get(PENDING_IMPORT));
+  }
+
+  /**
+   * {@code clb_validation_message} as JSON: the recorded wait ({@code {"header", "clbDatasetKey"}}),
+   * an early import ({@code {"pendingImport"}}), or for legacy validations the archive validator's
+   * message.
+   */
+  private Optional<JsonNode> storedClb(Validation validation) {
+    String stored = validation.getClbValidationMessage();
+    if (stored == null || stored.isBlank()) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(OrchestratorJson.mapper().readTree(stored));
+    } catch (Exception e) {
+      LOG.warn("Unreadable ChecklistBank state of validation {}", validation.getKey(), e);
+      return Optional.empty();
+    }
+  }
+
+  private static String toJson(Object value) {
+    try {
+      return OrchestratorJson.mapper().writeValueAsString(value);
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException("Cannot write " + value, e);
+    }
+  }
+
+  private static String text(JsonNode clbDatasetImport) {
+    return clbDatasetImport == null || clbDatasetImport.isNull()
+        ? null
+        : clbDatasetImport.toString();
+  }
+
+  /**
+   * Hands a ChecklistBank import (as ChecklistBank sent it, or null) to the checklist validator,
+   * with the waiting step's header: the validator evaluates it and replies to the engine. The
+   * validation stops waiting, so the poller doesn't hand it over again.
+   */
+  public void forwardChecklistImport(
+      Validation validation, ChecklistbankRequest wait, String clbDatasetImport)
+      throws IOException {
+    messages.send(
+        new PipelinesChecklistValidatorMessage(validation.getKey(), clbDatasetImport)
+            .setStepHeader(OrchestratorJson.mapper().convertValue(wait.header(), HEADER_MAP)));
+    validation.setStatus(Status.RUNNING);
+    validations.updateIfExecuting(validation);
+    LOG.info(
+        "ChecklistBank import of validation {} handed to the checklist validator",
+        validation.getKey());
+  }
+
+  /** ChecklistBank's callback: hands the import to the checklist validator. */
   public void validateChecklistResults(UUID validationKey, JsonNode clbDatasetImport) {
     Validation validation = stored(validationKey);
 
@@ -302,6 +421,31 @@ public class ValidationServiceImpl {
       throw errorMapper.apply(Validation.ErrorCode.VALIDATION_IS_NOT_EXECUTING);
     }
 
+    Optional<ChecklistbankRequest> wait = checklistbankWait(validation);
+    if (wait.isPresent()) {
+      try {
+        forwardChecklistImport(validation, wait.get(), text(clbDatasetImport));
+      } catch (Exception e) {
+        // Still waiting: the poller hands the import over later.
+        LOG.error("Could not hand the ChecklistBank import of {} over", validationKey, e);
+      }
+      return;
+    }
+
+    if (ValidationMessageService.isOrchestrated(validation.getFileFormat())
+        && storedClb(validation).isEmpty()) {
+      // ChecklistBank was faster than the engine's ChecklistBank step: keep the import until the
+      // wait is recorded (awaitChecklistbank hands it over then).
+      ObjectNode pending = OrchestratorJson.mapper().createObjectNode();
+      pending.set(
+          PENDING_IMPORT, clbDatasetImport == null ? NullNode.getInstance() : clbDatasetImport);
+      validation.setClbValidationMessage(pending.toString());
+      validations.updateIfExecuting(validation);
+      LOG.info("ChecklistBank import of {} arrived before its wait, kept", validationKey);
+      return;
+    }
+
+    // Legacy validations (started before Round B)
     if (clbDatasetImport == null || clbDatasetImport.isNull()) {
       LOG.info("CLB validation response for {} is null", validationKey);
       updateChecklistValidatorStatus(validation, Status.FAILED);
@@ -317,7 +461,10 @@ public class ValidationServiceImpl {
     }
   }
 
-  /** Sets the archive step and the validation status (ChecklistBank callback and poller). */
+  /**
+   * Sets the archive step and the validation status (ChecklistBank callback and poller), for
+   * legacy validations only; orchestrated ones end with their workflow.
+   */
   public void updateChecklistValidatorStatus(Validation validation, Status newStatus) {
     Status previous = validation.getStatus();
     validation.getMetrics().getStepTypes().stream()
@@ -407,21 +554,24 @@ public class ValidationServiceImpl {
   private void updateAndNotifySubmitted(UUID key, DataFile dataFile) {
     try {
       Validation v = validations.get(key).orElse(newValidationInstance(key, dataFile, Status.QUEUED));
-      Set<StepType> steps = stepResolverService.resolve(dataFile.getFileFormat());
+      Path folder = dataFile.getFilePath().getParent();
+      boolean checklist =
+          dataFile.getFileFormat() == FileFormat.DWCA && ArchiveCoreType.isChecklist(folder);
 
       v.setStatus(Status.QUEUED);
       v.setFileFormat(dataFile.getFileFormat());
       v.setFileSize(Files.size(dataFile.getFilePath()));
       v.setFile(dataFile.getSourceFileName());
-      v.getMetrics().setStepTypes(StepsMapper.mapToValidationSteps(steps));
-      v.setDataset(readEml(dataFile.getFilePath().getParent()));
+      // The workflow's steps follow once the engine has started it (composed when read).
+      v.getMetrics().setStepTypes(StepsMapper.getUploadingSteps(Status.FINISHED, null));
+      v.setDataset(readEml(folder));
 
       // Unless the validation was cancelled or deleted meanwhile
       if (validations.updateIfExecuting(v) == 0) {
         LOG.info("Validation {} is not executing anymore, not started", key);
         return;
       }
-      starter.start(key, dataFile.getFileFormat(), steps, v.getUsername());
+      starter.start(key, dataFile.getFileFormat(), checklist, v.getUsername());
     } catch (Exception ex) {
       LOG.error("Failed to submit validation {}", key, ex);
       updateFailedValidation(key, ex.getMessage());

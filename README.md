@@ -9,10 +9,11 @@ Workers do not manage workflow state.
 This repository replaces the former `validator-orchestrator` module in the pipelines repository.
 The redesign is tracked in [docs/architecture.md](docs/architecture.md).
 
-**Status:** Round A (Phase B) implemented, not deployed. The engine runs the DwC-DP validation
-chain (rounds 1–5), and `flow-orchestrator-ws` takes over the validation API from
-pipelines-validator-ws: DwC-DP validations run through the engine, other formats keep their
-legacy path until Round B. Retry, rerun and recovery come later. A local environment on minikube
+**Status:** Round A (Phase B) tested on minikube, Round B (B1–B5) implemented, neither deployed.
+`flow-orchestrator-ws` serves the validation API taken over from pipelines-validator-ws, and every
+format it accepts (DwC-A, tabular, spreadsheet, ColDP, DwC-DP) runs as an engine workflow,
+including the ChecklistBank wait of checklists. Removing the legacy validator-ws reporting from
+pipelines (B6) follows once dev has run the new path. Retry, rerun and recovery come later. A local environment on minikube
 is in [local-test/USAGE.md](local-test/USAGE.md).
 
 ## Modules
@@ -68,6 +69,10 @@ shared validation store. Its settings keep validator-ws's names where they exist
 `https://old.gbif-dev.org`); `MAIL_HOST`, `MAIL_FROM`;
 `CLB_API_URL`, `CLB_API_USER`, `CLB_API_PASSWORD`; `RABBIT_*`. The gateway route `/v1/validation*`
 points at it instead of validator-ws.
+
+The DwC-DP analysis report (`GET /validation/{key}/validationreport/1/DWCDP_ANALYSIS`), with
+example responses for mocking, is described in
+[docs/api/dwcdp-analysis-report.md](docs/api/dwcdp-analysis-report.md).
 
 ## Docker images
 

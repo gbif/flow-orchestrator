@@ -13,52 +13,18 @@
  */
 package org.gbif.orchestrator.ws.service;
 
-import org.gbif.api.model.pipelines.PipelinesWorkflow;
 import org.gbif.api.model.pipelines.StepType;
 import org.gbif.orchestrator.ws.api.Metrics;
-import org.gbif.orchestrator.ws.api.Metrics.ValidationStep;
 import org.gbif.orchestrator.ws.api.Validation;
 
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 import lombok.experimental.UtilityClass;
-import lombok.extern.slf4j.Slf4j;
 
-@Slf4j
+/** The upload step of a validation, before (or instead of) its workflow's steps. */
 @UtilityClass
 public class StepsMapper {
-
-  /** Maps raw step types to ValidationSteps. */
-  public static List<ValidationStep> mapToValidationSteps(Set<StepType> stepTypes) {
-
-    List<ValidationStep> collect =
-        stepTypes.stream()
-            .filter(st -> st != StepType.VALIDATOR_UPLOAD_ARCHIVE)
-            .map(
-                st ->
-                    Metrics.ValidationStep.builder()
-                        .executionOrder(PipelinesWorkflow.getValidatorWorkflow().getLevel(st))
-                        .stepType(st.name())
-                        .build())
-            .sorted(Comparator.comparingInt(ValidationStep::getExecutionOrder))
-            .collect(Collectors.toList());
-
-    collect.add(
-        0,
-        Metrics.ValidationStep.builder()
-            .stepType(StepType.VALIDATOR_UPLOAD_ARCHIVE.name())
-            .status(Validation.Status.FINISHED)
-            .executionOrder(
-                PipelinesWorkflow.getValidatorWorkflow()
-                    .getLevel(StepType.VALIDATOR_UPLOAD_ARCHIVE))
-            .build());
-
-    return collect;
-  }
 
   /**
    * Creates a list with Singleton list containing

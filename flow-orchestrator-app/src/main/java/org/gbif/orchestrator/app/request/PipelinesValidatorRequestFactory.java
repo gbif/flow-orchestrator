@@ -15,10 +15,12 @@ package org.gbif.orchestrator.app.request;
 
 import org.gbif.api.model.pipelines.StepType;
 import org.gbif.api.vocabulary.DatasetType;
+import org.gbif.api.vocabulary.EndpointType;
 import org.gbif.common.messaging.api.messages.DwcDpStageMessage;
 import org.gbif.common.messaging.api.messages.DwcDpToVerbatimMessage;
 import org.gbif.common.messaging.api.messages.PipelineBasedMessage;
 import org.gbif.common.messaging.api.messages.PipelinesBalancerMessage;
+import org.gbif.common.messaging.api.messages.PipelinesDwcaMessage;
 import org.gbif.common.messaging.api.messages.PipelinesInterpretedMessage;
 import org.gbif.common.messaging.api.messages.PipelinesVerbatimMessage;
 import org.gbif.common.messaging.api.messages.PipelinesVerbatimMessage.ValidationResult;
@@ -26,23 +28,30 @@ import org.gbif.orchestrator.api.step.OutputKeys;
 import org.gbif.orchestrator.api.step.StepHeader;
 import org.gbif.orchestrator.app.json.ContractJson;
 
+import java.net.URI;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 
 /**
- * Requests for the pipelines DwC-DP validator jobs: the existing postal message with the step
- * header added, wrapped in a {@link PipelinesBalancerMessage} so the balancer still chooses
- * standalone or distributed. A job that finds a header replies to the orchestrator instead of
- * sending the next step's message.
+ * Requests for the pipelines validator jobs behind the balancer (the DwC-DP chain, DwC-A to
+ * verbatim, and the shared identifier, interpretation and metrics steps): the existing postal
+ * message with the step header added, wrapped in a {@link PipelinesBalancerMessage} so the
+ * balancer still chooses standalone or distributed. A job that finds a header replies to the
+ * orchestrator instead of sending the next step's message.
  *
  * <p>{@code pipelineSteps} holds only the dispatched step: the jobs check that their step is in it,
  * and the verbatim routing key depends on whether VALIDATOR_VERBATIM_TO_IDENTIFIER is. No
  * data-shape flags are sent; the jobs read the shape from their input.
+ *
+ * <p>The shared steps take the identifier flags and interpretation types from the conversion
+ * step's outputs when it reported them (DwC-A); otherwise they get the DwC-DP values.
  */
 @Component
 public class PipelinesValidatorRequestFactory implements StepRequestFactory {
@@ -61,6 +70,7 @@ public class PipelinesValidatorRequestFactory implements StepRequestFactory {
     return Set.of(
         StepType.VALIDATOR_DWCDP_STAGE,
         StepType.VALIDATOR_DWCDP_TO_VERBATIM,
+        StepType.VALIDATOR_DWCA_TO_VERBATIM,
         StepType.VALIDATOR_VERBATIM_TO_IDENTIFIER,
         StepType.VALIDATOR_VERBATIM_TO_INTERPRETED,
         StepType.VALIDATOR_COLLECT_METRICS);
@@ -89,11 +99,27 @@ public class PipelinesValidatorRequestFactory implements StepRequestFactory {
             toVerbatim.setStepHeader(stepHeader);
             yield toVerbatim;
           }
+          case VALIDATOR_DWCA_TO_VERBATIM -> {
+            // The archive validator reported the core's shape; no crawler report exists here.
+            PipelinesDwcaMessage dwca =
+                new PipelinesDwcaMessage(
+                    dataset,
+                    datasetType(context),
+                    URI.create("urn:gbif:validation:" + dataset),
+                    attempt,
+                    null,
+                    steps,
+                    EndpointType.DWC_ARCHIVE,
+                    null,
+                    null);
+            dwca.setStepHeader(stepHeader);
+            yield dwca;
+          }
           case VALIDATOR_VERBATIM_TO_IDENTIFIER, VALIDATOR_VERBATIM_TO_INTERPRETED ->
               PipelinesVerbatimMessage.builder()
                   .datasetUuid(dataset)
                   .attempt(attempt)
-                  .interpretTypes(INTERPRET_ALL)
+                  .interpretTypes(interpretTypes(context))
                   .pipelineSteps(steps)
                   .validationResult(validationResult(context))
                   .datasetType(datasetType(context))
@@ -114,7 +140,7 @@ public class PipelinesValidatorRequestFactory implements StepRequestFactory {
                     null,
                     null,
                     result,
-                    INTERPRET_ALL,
+                    interpretTypes(context),
                     datasetType(context));
             interpreted.setStepHeader(stepHeader);
             yield interpreted;
@@ -125,14 +151,46 @@ public class PipelinesValidatorRequestFactory implements StepRequestFactory {
     return new PipelinesBalancerMessage(message.getClass().getSimpleName(), message.toString());
   }
 
-  /** As the DwC-DP to-verbatim job builds it today: identifiers are occurrenceIDs. */
+  /**
+   * Record counts from the conversion step. The identifier flags come from its outputs when it
+   * reported them (DwC-A); otherwise as the DwC-DP to-verbatim job builds them: identifiers are
+   * occurrenceIDs.
+   */
   private static ValidationResult validationResult(StepContext context) {
     return new ValidationResult(
-        false,
-        true,
+        flag(context, OutputKeys.TRIPLET_VALID, false),
+        flag(context, OutputKeys.OCCURRENCE_ID_VALID, true),
         false,
         context.requireLong(OutputKeys.OCCURRENCE_RECORDS),
         context.requireLong(OutputKeys.EVENT_RECORDS));
+  }
+
+  private static boolean flag(StepContext context, String key, boolean otherwise) {
+    return context
+        .output(key)
+        .map(
+            value -> {
+              if (!value.equals("true") && !value.equals("false")) {
+                throw new StepContext.MissingOutputException(
+                    "Output '" + key + "' is not true or false: " + value);
+              }
+              return Boolean.parseBoolean(value);
+            })
+        .orElse(otherwise);
+  }
+
+  /** The conversion step's interpretation types (comma-separated), or {@code ALL}. */
+  private static Set<String> interpretTypes(StepContext context) {
+    return context
+        .output(OutputKeys.INTERPRET_TYPES)
+        .map(
+            value ->
+                Arrays.stream(value.split(","))
+                    .map(String::trim)
+                    .filter(type -> !type.isEmpty())
+                    .collect(Collectors.toUnmodifiableSet()))
+        .filter(types -> !types.isEmpty())
+        .orElse(INTERPRET_ALL);
   }
 
   private static DatasetType datasetType(StepContext context) {

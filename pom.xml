@@ -75,7 +75,7 @@
     <!-- Dependency versions -->
     <spring-boot.version>3.5.8</spring-boot.version>
     <!-- Feature-branch build: VALIDATOR_*DWCDP* StepTypes are not released yet. -->
-    <gbif-api.version>2.4.30-FEATURE-ADD-DWCDP-DATA-VALIDATION-SNAPSHOT</gbif-api.version>
+    <gbif-api.version>2.4.30-FEATURE-ORCHESTRATION-SNAPSHOT</gbif-api.version>
     <!-- Snapshot: needs the builders for confirms, mandatory and dead-lettering (2.1.16). -->
     <gbif-postal-service.version>2.1.16-FEATURE-ORCHESTRATION-SNAPSHOT</gbif-postal-service.version>
     <!-- As pipelines, where validator-ws ran: postal-service brings 0.59, whose

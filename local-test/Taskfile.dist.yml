@@ -75,7 +75,7 @@ tasks:
       - scripts/forward.sh
 
   balancer:
-    desc: Bind a stand-in queue for the pipelines balancer, so pipelines requests are routable (needs task forward)
+    desc: Bind stand-in queues for the pipelines workers (balancer, archive and checklist validators), so their requests are routable (needs task forward)
     cmds:
       - scripts/balancer-queue.sh
 

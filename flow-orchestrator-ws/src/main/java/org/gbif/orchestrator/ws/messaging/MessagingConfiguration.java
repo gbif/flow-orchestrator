@@ -32,8 +32,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * RabbitMQ through postal: one confirming publisher for engine commands and the legacy pipelines
- * messages, and the WorkflowFinished listener. Off with {@code
+ * RabbitMQ through postal: one confirming publisher for engine commands and pipelines messages,
+ * and the listeners for WorkflowFinished and the ChecklistBank step requests. Off with {@code
  * orchestrator.ws.messaging.enabled=false} (tests provide {@link Messages}).
  */
 @Configuration
@@ -100,13 +100,22 @@ public class MessagingConfiguration {
                 .threads(messaging.getWorkflowFinishedThreads())
                 .deadLetter(messaging.getDeadLetterExchange())
                 .build();
+        QueueBinding checklistbank =
+            QueueBinding.builder(
+                    messaging.getChecklistbankQueue(),
+                    messaging.getChecklistbank().getExchange(),
+                    messaging.getChecklistbank().getRoutingKey())
+                .deadLetter(messaging.getDeadLetterExchange())
+                .build();
         try {
           listener.listen(binding, new WorkflowFinishedListener(validations));
+          listener.listen(checklistbank, new ChecklistbankRequestListener(validations));
         } catch (IOException e) {
-          throw new UncheckedIOException("Cannot listen on " + binding, e);
+          throw new UncheckedIOException("Cannot listen on " + binding + " / " + checklistbank, e);
         }
         running = true;
         LOG.info("Listening {} for WorkflowFinished", binding);
+        LOG.info("Listening {} for ChecklistBank step requests", checklistbank);
       }
 
       @Override
@@ -134,6 +143,11 @@ public class MessagingConfiguration {
       throw new IllegalStateException(
           "orchestrator.ws.messaging.workflow-finished needs exchange and routing-key, and "
               + "orchestrator.ws.messaging.workflow-finished-queue a name");
+    }
+    if (!complete(messaging.getChecklistbank()) || isBlank(messaging.getChecklistbankQueue())) {
+      throw new IllegalStateException(
+          "orchestrator.ws.messaging.checklistbank needs exchange and routing-key, and "
+              + "orchestrator.ws.messaging.checklistbank-queue a name");
     }
   }
 

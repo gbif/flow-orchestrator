@@ -41,9 +41,10 @@ Phase A rounds (Proposed order):
    report builder moves to Phase B.
 6. **Round A** (Phase B starts; revised 2026-11-19): validator-ws moves into a new module of this
    repository, `flow-orchestrator-ws`, and DwC-DP validations run through the orchestrator (see
-   "Rounds A and B" below).
+   "Rounds A and B" below). *(done, tested on minikube)*
 7. **Round B:** the DwC-A validation chain in orchestrator mode, then all validator-ws reporting is
-   removed from pipelines.
+   removed from pipelines (see "Round B plan"). *(B1–B5 implemented, not deployed; B6, the
+   removal, follows once dev has run the new path)*
 8. Retry, rerun and recovery (timeouts, stale-attempt handling).
 
 ### Rounds A and B (Decided 2026-11-18, Round A revised 2026-11-19)
@@ -258,6 +259,89 @@ Source: validator-ws (`pipelines-validator-ws`, `validator-api`, `validator-mail
 - The ChecklistBank cleaner finishes and emails before the checklist results message is
   processed.
 - Workers reach it via the gateway.
+
+### Round B plan (Decided 2026-11-20; B1–B5 implemented, not deployed)
+
+Every format validator-ws accepted runs through the engine; then the legacy reporting goes.
+
+**Decided with the user (2026-11-20):**
+- **Parity with the original validator-ws:** only the formats it supported (DWCA, TABULAR,
+  SPREADSHEET, COLDP; DWCDP since Round A). XML was never detected on pipelines master/dev and
+  stays out. The visible flows stay the same.
+- **ChecklistBank:** a new step `VALIDATOR_CHECKLISTBANK` (gbif-api feature branch). Its request
+  goes to the ws (`orchestrator` / `validation.checklistbank`), which records the wait; the ws's
+  callback or poller hands the import, with the step header, to the existing pipelines checklist
+  validator (validation-only), which evaluates it and replies. `GET /validation` shows the step
+  inside `VALIDATOR_VALIDATE_ARCHIVE`, as the wait was hidden there before.
+- **Checklist flows as before:** a Taxon-core DwC-A continues with the occurrence steps after
+  ChecklistBank; ColDP ends there.
+- **Fatal archive issues follow §4a:** the archive step succeeds with its `ARCHIVE_VALIDATION`
+  report, `ArchiveValidationInterpreter` rejects, the workflow ends FINISHED, rejected (legacy:
+  FAILED).
+- **EML:** the pipelines archive check and the DwC-DP analyser both use gbif-eml-validation.
+
+**Workflows** (chart defaults, `helm/flow-orchestrator/values.yaml`; `ChartWorkflowsTest` binds
+them): `validation-dwca` (`fileFormat=DWCA, checklist=false`), `validation-dwca-checklist`
+(`checklist=true`, with the ChecklistBank step), `validation-tabular`, `validation-spreadsheet`,
+`validation-coldp` (archive check and ChecklistBank only), `validation-dwcdp` unchanged. The ws
+sends `checklist` for DwC-A from `meta.xml`'s core row type, so each workflow is a fixed chain.
+
+**Implemented (B1–B5):**
+- *Contracts:* `StepType.VALIDATOR_CHECKLISTBANK`; optional `stepHeader` on postal's
+  `PipelinesArchiveValidatorMessage`, `PipelinesDwcaMessage` and
+  `PipelinesChecklistValidatorMessage`; the balancer's DwC-A handler keeps it.
+  `PipelinesDwcaMessage.validationReport` may be null (orchestrator-dispatched only: no
+  fabricated crawler report). `OutputKeys` `INTERPRET_TYPES`, `TRIPLET_VALID`,
+  `OCCURRENCE_ID_VALID`, `CLB_DATASET_KEY`; `ARCHIVE_VALIDATION` and `CHECKLIST` content documented
+  in `ReportTypes` (the legacy `files` shape plus a verdict).
+- *Engine:* request factories for the archive validator (direct to its queue, `fileFormat` from
+  the START parameters), DwC-A to verbatim (balancer) and the ChecklistBank wait; the shared steps
+  take identifier flags and interpretation types from the conversion's outputs when present.
+- *ws:* every format starts a workflow; the ChecklistBank request listener; callback and poller
+  forward with the header (the poller no longer finishes the validation itself); an import that
+  arrives before the wait is recorded is kept and forwarded then; the composer merges
+  `ARCHIVE_VALIDATION`, `CHECKLIST` and `INTERPRETATION_METRICS` file infos as the legacy workers
+  merged them (`MetricsMerge`), shows the ChecklistBank wait inside the archive step and
+  `WAITING_FOR_CHECKLISTBANK`, and numbers the visible steps 0, 1, 2…
+- *pipelines:* new module `sdks/orchestrator-client` (`OrchestratorReplies`, moved from
+  spark-coordinator) used by both coordinators; `--orchestrator-exchange` and
+  `--orchestrator-completion-routing-key` on the CLI steps and the checklist validator. Orchestrator
+  mode in the archive validator (validators fill an empty `Validation`, no validator-ws; the
+  ChecklistBank submission is awaited, removing the race), in DwC-A to verbatim (outputs: counts,
+  dataset type, interpretation types, identifier flags `true` as the fabricated report made them)
+  and in the checklist validator. The archive check's EML runs on gbif-eml-validation (GBIF profile
+  1.3 default, quality rules on).
+- *Analyser:* `EmlValidator` on gbif-eml-validation (EML 2.2.0 default, quality rules off); same
+  issue types and severities, a DOCTYPE is now refused; its private copy of the 2.2.0 schemas is
+  gone.
+
+**Deviations from the plan:**
+- `OrchestratorReplies` went to a new module, not `sdks/core` (no postal there; adding it would
+  reach every pipelines module).
+- The archive validator finds the upload in the store as the one top-level zip or gzip file: in
+  orchestrator mode it doesn't fetch the validation (where validator-ws kept the file name).
+- `indexeable` comes from the metrics (`indexedCount > 0`), as in Round A; validator-ws set it
+  true once metrics ran.
+- The legacy PUT stays (409 for orchestrated validations); removing it is the later API round.
+- Not unit-tested: DwC-A to verbatim in orchestrator mode (needs HDFS), and the shared Spark steps
+  on DwC-A input. They are tested in dev.
+- dwc-dp-analyser-service moves to the analyser release that carries the EML change (0.0.17) once
+  it is cut.
+
+**To deploy (private configuration):** the engine's chart defaults carry the workflows; the ws
+binds `orchestrator-ws.validation.checklistbank` itself; the pipelines archive validator,
+validator DwC-A to verbatim and checklist validator need `--orchestrator-completion-routing-key
+validation.step.completed`; ChecklistBank's callback URL (`--clb-callback-url`) points at the ws.
+Release order: gbif-api, postal, flow-orchestrator-api → pipelines, analyser → ws and engine.
+Validations still running on the legacy path at deploy time are lost (deploy when idle).
+
+**B6, after dev has run the new path:** remove the legacy branches and validator-ws clients from
+pipelines (inventory: `ValidationClient`, `ValidatorStatusService`, `Validations`,
+`ValidationUtil` status and merge parts, `Graph.getLevel` uses, the unused `ValidationWsClient`
+injections in the ingestion verbatim services), delete `pipelines-validator-ws`,
+`validator-integration-tests`, `validator-mail`, `validator-ws-client`, `validator-eml` and the
+empty `validator-checklists`; drop the `SchemaValidatorFactory` parameter of the archive
+validators; remove the ws's legacy-only code.
 
 ### Round 5 plan (Decided 2026-11-18)
 

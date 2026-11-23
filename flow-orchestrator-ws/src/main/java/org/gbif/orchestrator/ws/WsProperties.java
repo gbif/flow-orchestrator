@@ -103,8 +103,34 @@ public class WsProperties {
     private String workflowFinishedQueue;
 
     private int workflowFinishedThreads = 1;
+
+    /**
+     * The engine's VALIDATOR_CHECKLISTBANK step requests: this service waits for the ChecklistBank
+     * import of a checklist. It binds its own queue.
+     */
+    private Route checklistbank = new Route();
+
+    /** Queue for {@link #checklistbank}. */
+    private String checklistbankQueue;
+
     /** How long a publish waits for the broker's confirm. */
     private java.time.Duration confirmTimeout = java.time.Duration.ofSeconds(10);
+
+    public Route getChecklistbank() {
+      return checklistbank;
+    }
+
+    public void setChecklistbank(Route checklistbank) {
+      this.checklistbank = checklistbank;
+    }
+
+    public String getChecklistbankQueue() {
+      return checklistbankQueue;
+    }
+
+    public void setChecklistbankQueue(String checklistbankQueue) {
+      this.checklistbankQueue = checklistbankQueue;
+    }
 
     public boolean isEnabled() {
       return enabled;

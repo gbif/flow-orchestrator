@@ -30,7 +30,7 @@ public class WorkflowReader {
   /** The engine's domain for validations; the subject is (validation key, attempt 1). */
   static final String DOMAIN = "VALIDATION";
 
-  static final int ATTEMPT = 1;
+  public static final int ATTEMPT = 1;
 
   public record Execution(
       UUID id, String status, boolean rejected, String reason, String workflowName) {}

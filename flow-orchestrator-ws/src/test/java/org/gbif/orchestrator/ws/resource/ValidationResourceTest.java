@@ -140,7 +140,8 @@ class ValidationResourceTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"datasetKey\":7,\"status\":\"finished\"}"))
         .andExpect(status().isNoContent());
-    org.junit.jupiter.api.Assertions.assertEquals(1, messages.legacy.size());
+    // No ChecklistBank step yet: the import is kept until the engine asks for the wait.
+    org.junit.jupiter.api.Assertions.assertTrue(messages.legacy.isEmpty());
   }
 
   @Test

@@ -13,8 +13,6 @@
  */
 package org.gbif.orchestrator.ws.service;
 
-import org.gbif.api.model.pipelines.StepType;
-import org.gbif.common.messaging.api.messages.PipelinesArchiveValidatorMessage;
 import org.gbif.orchestrator.api.command.CommandType;
 import org.gbif.orchestrator.api.command.Domain;
 import org.gbif.orchestrator.api.command.WorkflowCommand;
@@ -24,21 +22,23 @@ import org.gbif.orchestrator.ws.messaging.Messages;
 import java.io.IOException;
 import java.time.Clock;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
 /**
- * Starts the work of a validation. Formats the engine runs ({@link #isOrchestrated}) get a {@code
- * WorkflowCommand}; the others keep today's legacy pipelines start message until Round B.
+ * Starts the work of a validation with a {@code WorkflowCommand}. The engine selects the workflow
+ * by the parameters: {@code fileFormat}, and for DwC-A {@code checklist} (a Taxon core, which
+ * waits for ChecklistBank). Every format the service accepts runs through the engine (Round B).
  */
 @Service
 public class ValidationMessageService {
 
   /** The engine's workflows are matched on this parameter (see the engine's workflow config). */
   public static final String FILE_FORMAT_PARAMETER = "fileFormat";
+
+  /** {@code true} or {@code false} for DwC-A: whether the core is Taxon. */
+  public static final String CHECKLIST_PARAMETER = "checklist";
 
   private final Messages messages;
   private final Clock clock;
@@ -48,30 +48,27 @@ public class ValidationMessageService {
     this.clock = clock;
   }
 
-  /** True for formats whose validation runs as an engine workflow. */
+  /**
+   * True for formats whose validation runs as an engine workflow: since Round B every format the
+   * service detects. Validations created before Round B have no workflow and keep their stored
+   * state.
+   */
   public static boolean isOrchestrated(FileFormat fileFormat) {
-    return fileFormat == FileFormat.DWCDP;
+    return fileFormat != null;
   }
 
-  public void start(UUID validationKey, FileFormat fileFormat, Set<StepType> steps, String user)
+  /** The START parameters for an upload: the format, and for DwC-A whether it is a checklist. */
+  static Map<String, String> parameters(FileFormat fileFormat, boolean checklist) {
+    return fileFormat == FileFormat.DWCA
+        ? Map.of(FILE_FORMAT_PARAMETER, fileFormat.name(), CHECKLIST_PARAMETER, String.valueOf(checklist))
+        : Map.of(FILE_FORMAT_PARAMETER, fileFormat.name());
+  }
+
+  public void start(UUID validationKey, FileFormat fileFormat, boolean checklist, String user)
       throws IOException {
-    if (isOrchestrated(fileFormat)) {
-      messages.send(
-          command(
-              CommandType.START,
-              validationKey,
-              Map.of(FILE_FORMAT_PARAMETER, fileFormat.name()),
-              user,
-              null));
-    } else {
-      PipelinesArchiveValidatorMessage message = new PipelinesArchiveValidatorMessage();
-      message.setDatasetUuid(validationKey);
-      message.setAttempt(1);
-      message.setExecutionId(1L);
-      message.setPipelineSteps(steps.stream().map(Enum::name).collect(Collectors.toSet()));
-      message.setFileFormat(fileFormat.name());
-      messages.send(message);
-    }
+    messages.send(
+        command(
+            CommandType.START, validationKey, parameters(fileFormat, checklist), user, null));
   }
 
   /** Asks the engine to end an orchestrated validation's workflow. */

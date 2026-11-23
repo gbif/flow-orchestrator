@@ -22,10 +22,20 @@ public final class ReportTypes {
   /** DwC-DP analysis: validity and per-resource results (dwc-dp-analyser). */
   public static final String DWCDP_ANALYSIS = "DWCDP_ANALYSIS";
 
-  /** Archive checks: EML issues, core issues, term counts (archive validation step). */
+  /**
+   * Archive checks of VALIDATOR_VALIDATE_ARCHIVE: EML issues, core and extension issues, term
+   * counts. Content: {@code {"valid": boolean, "invalidationReason": string|null, "files":
+   * [FileInfo...]}}, where {@code files} has the shape of the validator API's {@code
+   * Metrics.files}. {@code valid=false} (a fatal issue, or no usable occurrence core) rejects the
+   * validation.
+   */
   public static final String ARCHIVE_VALIDATION = "ARCHIVE_VALIDATION";
 
-  /** ChecklistBank results and import status (checklist validation). */
+  /**
+   * ChecklistBank evaluation of VALIDATOR_CHECKLISTBANK. Content: {@code {"clbDatasetKey": int,
+   * "importStatus": string, "indexeable": boolean|null, "files": [FileInfo...]}}, {@code files} as
+   * in {@link #ARCHIVE_VALIDATION}; {@code indexeable} is set for ColDP.
+   */
   public static final String CHECKLIST = "CHECKLIST";
 
   /** DwC-DP to verbatim conversion: compact, detailed and statistics reports. */

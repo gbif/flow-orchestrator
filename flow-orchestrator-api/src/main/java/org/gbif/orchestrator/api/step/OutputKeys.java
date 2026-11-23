@@ -20,16 +20,50 @@ package org.gbif.orchestrator.api.step;
 public final class OutputKeys {
 
   /**
-   * What a conversion step produced, as a gbif-api {@code DatasetType} name ({@code OCCURRENCE} or
-   * {@code SAMPLING_EVENT}). Written by VALIDATOR_DWCDP_TO_VERBATIM.
+   * The data's shape, as a gbif-api {@code DatasetType} name ({@code OCCURRENCE}, {@code
+   * SAMPLING_EVENT} or {@code CHECKLIST}). Written by VALIDATOR_VALIDATE_ARCHIVE (from the core row
+   * type) and by the conversion steps VALIDATOR_DWCA_TO_VERBATIM and VALIDATOR_DWCDP_TO_VERBATIM
+   * (what they produced); the latest wins.
    */
   public static final String DATASET_TYPE = "datasetType";
 
-  /** Number of occurrence records produced. Written by VALIDATOR_DWCDP_TO_VERBATIM. */
+  /**
+   * Number of occurrence records produced. Written by the conversion steps
+   * VALIDATOR_DWCA_TO_VERBATIM and VALIDATOR_DWCDP_TO_VERBATIM.
+   */
   public static final String OCCURRENCE_RECORDS = "occurrenceRecords";
 
-  /** Number of event records produced. Written by VALIDATOR_DWCDP_TO_VERBATIM. */
+  /**
+   * Number of event records produced. Written by the conversion steps VALIDATOR_DWCA_TO_VERBATIM and
+   * VALIDATOR_DWCDP_TO_VERBATIM.
+   */
   public static final String EVENT_RECORDS = "eventRecords";
+
+  /**
+   * Comma-separated interpretation types for the interpretation steps (pipelines {@code
+   * interpretTypes}). Written by VALIDATOR_DWCA_TO_VERBATIM; without it the orchestrator asks for
+   * {@code ALL}.
+   */
+  public static final String INTERPRET_TYPES = "interpretTypes";
+
+  /**
+   * {@code true} or {@code false}: whether occurrence triplets may identify records. Written by
+   * VALIDATOR_DWCA_TO_VERBATIM.
+   */
+  public static final String TRIPLET_VALID = "tripletValid";
+
+  /**
+   * {@code true} or {@code false}: whether occurrenceIDs may identify records. Written by
+   * VALIDATOR_DWCA_TO_VERBATIM.
+   */
+  public static final String OCCURRENCE_ID_VALID = "occurrenceIdValid";
+
+  /**
+   * The ChecklistBank dataset key a checklist was submitted to. Written by
+   * VALIDATOR_VALIDATE_ARCHIVE for checklists (Taxon-core DwC-A, ColDP); read by
+   * VALIDATOR_CHECKLISTBANK.
+   */
+  public static final String CLB_DATASET_KEY = "clbDatasetKey";
 
   private OutputKeys() {}
 }

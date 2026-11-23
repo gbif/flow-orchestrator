@@ -13,12 +13,17 @@
  */
 package org.gbif.orchestrator.ws.jobs;
 
+import org.gbif.api.model.pipelines.StepType;
 import org.gbif.common.messaging.api.messages.PipelinesChecklistValidatorMessage;
 import org.gbif.common.messaging.api.messages.PipelinesCleanerMessage;
+import org.gbif.orchestrator.api.json.OrchestratorJson;
+import org.gbif.orchestrator.api.step.StepHeader;
 import org.gbif.orchestrator.ws.api.FileFormat;
 import org.gbif.orchestrator.ws.api.Validation;
 import org.gbif.orchestrator.ws.api.Validation.Status;
+import org.gbif.orchestrator.ws.messaging.ChecklistbankRequest;
 import org.gbif.orchestrator.ws.persistence.ValidationRepository;
+import org.gbif.orchestrator.ws.service.ValidationServiceImpl;
 import org.gbif.orchestrator.ws.support.EngineRows;
 import org.gbif.orchestrator.ws.support.FakeMessages;
 import org.gbif.orchestrator.ws.support.RecordingEmails;
@@ -47,6 +52,7 @@ class JobsTest {
   private static final ObjectMapper JSON = new ObjectMapper();
 
   @Autowired ClbValidationPoller poller;
+  @Autowired ValidationServiceImpl service;
   @Autowired RetentionPolicyTask retention;
   @Autowired ValidationRepository validations;
   @Autowired TestBeans.FakeChecklistbank checklistbank;
@@ -98,6 +104,42 @@ class JobsTest {
     assertEquals(finished, next.getValidationKey());
     assertEquals("finished", JSON.readTree(next.getClBResponsePayload()).get("status").asText());
     assertEquals(3, emails.sent.size());
+  }
+
+  @Test
+  void pollerHandsOrchestratedImportsOverWithTheStepHeader() throws Exception {
+    UUID finished = stored(Status.QUEUED, null, Duration.ofDays(2));
+    UUID unreachable = stored(Status.QUEUED, null, Duration.ofDays(2));
+    service.awaitChecklistbank(wait(finished, 11));
+    service.awaitChecklistbank(wait(unreachable, 12));
+    checklistbank.imports.put(11, JSON.readTree("{\"datasetKey\":11,\"status\":\"running\"}"));
+
+    poller.poll();
+
+    // Whatever ChecklistBank says goes to the checklist validator, which decides.
+    PipelinesChecklistValidatorMessage next =
+        (PipelinesChecklistValidatorMessage) messages.legacy.get(0);
+    assertEquals(1, messages.legacy.size());
+    assertEquals(finished, next.getValidationKey());
+    assertEquals("running", JSON.readTree(next.getClBResponsePayload()).get("status").asText());
+    assertEquals(
+        wait(finished, 11).header(),
+        OrchestratorJson.mapper().convertValue(next.getStepHeader(), StepHeader.class));
+    assertEquals(Status.RUNNING, status(finished));
+    // ChecklistBank unreachable: keeps waiting for the next run.
+    assertEquals(Status.WAITING_FOR_CHECKLISTBANK, status(unreachable));
+    assertEquals(0, emails.sent.size());
+  }
+
+  private static ChecklistbankRequest wait(UUID key, int clbDatasetKey) {
+    return new ChecklistbankRequest(
+        new StepHeader(
+            UUID.fromString("0b6c1b5e-6a4c-4d7e-9a43-6a0f4c1f7d10"),
+            key,
+            1,
+            StepType.VALIDATOR_CHECKLISTBANK,
+            1),
+        clbDatasetKey);
   }
 
   @Test

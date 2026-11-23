@@ -13,9 +13,7 @@
  */
 package org.gbif.orchestrator.ws.service;
 
-import org.gbif.api.model.pipelines.StepType;
 import org.gbif.api.vocabulary.UserRole;
-import org.gbif.common.messaging.api.messages.PipelinesArchiveValidatorMessage;
 import org.gbif.orchestrator.api.command.CommandType;
 import org.gbif.orchestrator.api.command.Domain;
 import org.gbif.orchestrator.api.command.WorkflowCommand;
@@ -107,19 +105,32 @@ class ValidationServiceTest {
   }
 
   @Test
-  void dwcaUploadKeepsTheLegacyStart() throws Exception {
+  void dwcaUploadStartsTheOccurrenceWorkflow() throws Exception {
     Validation submitted = service.validateFile(Archives.dwca("cats.zip"), NO_REQUEST);
 
     Validation queued = await(submitted.getKey(), v -> v.getStatus() == Status.QUEUED);
     assertEquals(FileFormat.DWCA, queued.getFileFormat());
     assertEquals("Cats of the example valley", queued.getDataset().getTitle());
 
-    assertTrue(messages.commands.isEmpty());
-    PipelinesArchiveValidatorMessage start =
-        (PipelinesArchiveValidatorMessage) messages.legacy.get(0);
-    assertEquals(submitted.getKey(), start.getDatasetUuid());
-    assertEquals("DWCA", start.getFileFormat());
-    assertTrue(start.getPipelineSteps().contains(StepType.VALIDATOR_VALIDATE_ARCHIVE.name()));
+    assertTrue(messages.legacy.isEmpty());
+    WorkflowCommand start = messages.commands.get(0);
+    assertEquals(CommandType.START, start.type());
+    assertEquals(submitted.getKey(), start.datasetKey());
+    assertEquals(Map.of("fileFormat", "DWCA", "checklist", "false"), start.parameters());
+    // Only the upload is stored; the workflow's steps follow when read.
+    assertEquals(
+        List.of("VALIDATOR_UPLOAD_ARCHIVE"),
+        queued.getMetrics().getStepTypes().stream().map(ValidationStep::getStepType).toList());
+  }
+
+  @Test
+  void taxonCoreDwcaUploadStartsTheChecklistWorkflow() throws Exception {
+    Validation submitted = service.validateFile(Archives.dwcaChecklist("taxa.zip"), NO_REQUEST);
+
+    await(submitted.getKey(), v -> v.getStatus() == Status.QUEUED);
+
+    assertEquals(
+        Map.of("fileFormat", "DWCA", "checklist", "true"), messages.commands.get(0).parameters());
   }
 
   @Test
@@ -315,7 +326,8 @@ class ValidationServiceTest {
 
   @Test
   void aLegacyUpdateEmailsOnTheFirstFinalStatusOnly() {
-    UUID key = stored("alice", Status.RUNNING, FileFormat.DWCA);
+    // Without a format (never detected), the legacy PUT still applies.
+    UUID key = stored("alice", Status.RUNNING, null);
     Validation done = Validation.builder().key(key).status(Status.FINISHED).build();
 
     service.update(done);
@@ -326,7 +338,7 @@ class ValidationServiceTest {
 
   @Test
   void aDeletedValidationStaysDeleted() {
-    UUID key = stored("alice", Status.RUNNING, FileFormat.DWCA);
+    UUID key = stored("alice", Status.RUNNING, null);
     service.delete(key);
 
     service.update(Validation.builder().key(key).status(Status.FINISHED).build());

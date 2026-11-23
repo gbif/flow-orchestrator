@@ -18,6 +18,7 @@ import org.gbif.orchestrator.ws.api.Validation;
 import org.gbif.orchestrator.ws.api.Validation.Status;
 import org.gbif.orchestrator.ws.api.ValidationSearchRequest;
 import org.gbif.orchestrator.ws.clb.ChecklistbankClient;
+import org.gbif.orchestrator.ws.messaging.ChecklistbankRequest;
 import org.gbif.orchestrator.ws.messaging.Messages;
 import org.gbif.orchestrator.ws.persistence.ValidationRepository;
 import org.gbif.orchestrator.ws.service.ValidationServiceImpl;
@@ -42,8 +43,15 @@ import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 /**
  * Safety net for ChecklistBank validations (formerly {@code ClbValidationCleaner}): asks
  * ChecklistBank about validations that have waited longer than {@code clb.cleaner.hoursOld}, in
- * case its callback was lost. A finished import continues like the callback; a canceled one ends
- * ABORTED; anything else, or an error, ends FAILED. Until Round B redesigns the wait.
+ * case its callback was lost.
+ *
+ * <p>An orchestrated wait (the engine's VALIDATOR_CHECKLISTBANK step): the import, whatever its
+ * state, goes to the checklist validator like the callback's; the validator evaluates a finished
+ * import and fails the step otherwise, and the workflow ends the validation. If ChecklistBank can't
+ * be asked, the validation keeps waiting for the next run.
+ *
+ * <p>Legacy validations (started before Round B): a finished import continues like the callback; a
+ * canceled one ends ABORTED; anything else, or an error, ends FAILED.
  *
  * <p>Every due validation is handled (validator-ws only took the first 20 per run).
  */
@@ -92,6 +100,24 @@ public class ClbValidationPoller {
   }
 
   void check(Validation validation) {
+    Optional<ChecklistbankRequest> wait = service.checklistbankWait(validation);
+    if (wait.isPresent()) {
+      try {
+        Optional<JsonNode> latest = checklistbank.latestImport(validation.getClbDatasetKey());
+        service.forwardChecklistImport(
+            validation, wait.get(), latest.map(JsonNode::toString).orElse(null));
+      } catch (Exception e) {
+        LOG.warn(
+            "Could not get or hand over the ChecklistBank import of validation {}, retrying later",
+            validation.getKey(),
+            e);
+      }
+      return;
+    }
+    checkLegacy(validation);
+  }
+
+  private void checkLegacy(Validation validation) {
     Status status = Status.FAILED;
     try {
       Optional<JsonNode> latest = checklistbank.latestImport(validation.getClbDatasetKey());

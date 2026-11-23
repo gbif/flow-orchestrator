@@ -2,6 +2,18 @@
 
 ## 0.0.1 (unreleased)
 
+- Round B (B1–B5): every format the validator accepts runs through the engine. Workflows
+  `validation-dwca`, `validation-dwca-checklist`, `validation-tabular`, `validation-spreadsheet` and
+  `validation-coldp` (chart defaults, checked by `ChartWorkflowsTest`); the ws sends `checklist`
+  for DwC-A from `meta.xml`. New step `VALIDATOR_CHECKLISTBANK`: its request goes to the ws, whose
+  ChecklistBank callback and poller hand the import, with the step header, to the pipelines
+  checklist validator (an import that arrives before the wait is kept). Request factories for the
+  archive validator, DwC-A to verbatim and the ChecklistBank wait; `ArchiveValidationInterpreter`
+  rejects an archive with a fatal issue. `OutputKeys` `INTERPRET_TYPES`, `TRIPLET_VALID`,
+  `OCCURRENCE_ID_VALID`, `CLB_DATASET_KEY`. The ws composes `metrics.files` from the archive,
+  ChecklistBank and metrics reports as the legacy workers merged them, shows the ChecklistBank wait
+  inside the archive step, and numbers steps from 1 after the upload (was off by one).
+  `StepResolverService` removed.
 - Helm charts `helm/flow-orchestrator` (engine, one release per domain) and
   `helm/flow-orchestrator-ws`: Actuator startup, liveness and readiness probes; credentials from
   a Secret; Spring `config` from values. The engine's default values hold the `validation-dwcdp`

@@ -25,7 +25,32 @@ orchestrator:
           dependencies: [VALIDATOR_VALIDATE_DWCDP]
         - step: VALIDATOR_DWCDP_TO_VERBATIM
           dependencies: [VALIDATOR_DWCDP_STAGE]
+    # The DwC-A checklist chain (shortened): the workflow selection by fileFormat and checklist,
+    # and the ChecklistBank wait step, load like any other.
+    validation-dwca-checklist:
+      domain: VALIDATION
+      match:
+        fileFormat: DWCA
+        checklist: "true"
+      nodes:
+        - step: VALIDATOR_VALIDATE_ARCHIVE
+        - step: VALIDATOR_CHECKLISTBANK
+          dependencies: [VALIDATOR_VALIDATE_ARCHIVE]
+        - step: VALIDATOR_DWCA_TO_VERBATIM
+          dependencies: [VALIDATOR_CHECKLISTBANK]
   steps:
+    VALIDATOR_VALIDATE_ARCHIVE:
+      request:
+        exchange: occurrence
+        routing-key: occurrence.pipelines.archive.validator.validator
+    VALIDATOR_CHECKLISTBANK:
+      request:
+        exchange: orchestrator
+        routing-key: validation.checklistbank
+    VALIDATOR_DWCA_TO_VERBATIM:
+      request:
+        exchange: occurrence
+        routing-key: occurrence.pipelines.balancer
     VALIDATOR_VALIDATE_DWCDP:
       request:
         exchange: occurrence

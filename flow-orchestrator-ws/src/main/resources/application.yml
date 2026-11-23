@@ -84,6 +84,11 @@ orchestrator:
         exchange: orchestrator
         routing-key: validation.workflow.finished
       workflow-finished-queue: orchestrator-ws.validation.workflow.finished
+      # The engine's VALIDATOR_CHECKLISTBANK requests (the engine's step routing sends them here).
+      checklistbank:
+        exchange: orchestrator
+        routing-key: validation.checklistbank
+      checklistbank-queue: orchestrator-ws.validation.checklistbank
 
 management:
   endpoint:

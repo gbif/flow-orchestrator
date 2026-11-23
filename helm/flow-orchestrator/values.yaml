@@ -70,7 +70,68 @@ config:
             dependencies: [VALIDATOR_VERBATIM_TO_IDENTIFIER]
           - step: VALIDATOR_COLLECT_METRICS
             dependencies: [VALIDATOR_VERBATIM_TO_INTERPRETED]
+      # DwC-A, tabular and spreadsheet uploads (as validator-ws ran them). The ws sends
+      # {fileFormat, checklist} for DwC-A (checklist = Taxon core in meta.xml), {fileFormat}
+      # otherwise.
+      validation-dwca: &occurrence-chain
+        domain: VALIDATION
+        match:
+          fileFormat: DWCA
+          checklist: "false"
+        nodes:
+          - step: VALIDATOR_VALIDATE_ARCHIVE
+          - step: VALIDATOR_DWCA_TO_VERBATIM
+            dependencies: [VALIDATOR_VALIDATE_ARCHIVE]
+          - step: VALIDATOR_VERBATIM_TO_IDENTIFIER
+            dependencies: [VALIDATOR_DWCA_TO_VERBATIM]
+          - step: VALIDATOR_VERBATIM_TO_INTERPRETED
+            dependencies: [VALIDATOR_VERBATIM_TO_IDENTIFIER]
+          - step: VALIDATOR_COLLECT_METRICS
+            dependencies: [VALIDATOR_VERBATIM_TO_INTERPRETED]
+      validation-tabular:
+        <<: *occurrence-chain
+        match:
+          fileFormat: TABULAR
+      validation-spreadsheet:
+        <<: *occurrence-chain
+        match:
+          fileFormat: SPREADSHEET
+      # A checklist DwC-A waits for its ChecklistBank import, then continues as before.
+      validation-dwca-checklist:
+        domain: VALIDATION
+        match:
+          fileFormat: DWCA
+          checklist: "true"
+        nodes:
+          - step: VALIDATOR_VALIDATE_ARCHIVE
+          - step: VALIDATOR_CHECKLISTBANK
+            dependencies: [VALIDATOR_VALIDATE_ARCHIVE]
+          - step: VALIDATOR_DWCA_TO_VERBATIM
+            dependencies: [VALIDATOR_CHECKLISTBANK]
+          - step: VALIDATOR_VERBATIM_TO_IDENTIFIER
+            dependencies: [VALIDATOR_DWCA_TO_VERBATIM]
+          - step: VALIDATOR_VERBATIM_TO_INTERPRETED
+            dependencies: [VALIDATOR_VERBATIM_TO_IDENTIFIER]
+          - step: VALIDATOR_COLLECT_METRICS
+            dependencies: [VALIDATOR_VERBATIM_TO_INTERPRETED]
+      # ColDP: the archive check and the ChecklistBank evaluation only.
+      validation-coldp:
+        domain: VALIDATION
+        match:
+          fileFormat: COLDP
+        nodes:
+          - step: VALIDATOR_VALIDATE_ARCHIVE
+          - step: VALIDATOR_CHECKLISTBANK
+            dependencies: [VALIDATOR_VALIDATE_ARCHIVE]
     steps:
+      # The archive validator binds this key itself; the balancer has no handler for it.
+      VALIDATOR_VALIDATE_ARCHIVE:
+        request: { exchange: occurrence, routing-key: occurrence.pipelines.archive.validator.validator }
+      # Consumed by flow-orchestrator-ws, which waits for the ChecklistBank import.
+      VALIDATOR_CHECKLISTBANK:
+        request: { exchange: orchestrator, routing-key: validation.checklistbank }
+      VALIDATOR_DWCA_TO_VERBATIM:
+        request: { exchange: occurrence, routing-key: occurrence.pipelines.balancer }
       # The dwc-dp-analyser-service binds its own queue to this exchange and routing key.
       VALIDATOR_VALIDATE_DWCDP:
         request: { exchange: orchestrator, routing-key: validation.dwcdp.analysis }

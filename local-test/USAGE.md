@@ -119,6 +119,38 @@ internet access. If the analyser logs `Fetching DwC-DP profile … failed` and c
 `valid: false`, restart CoreDNS (`kubectl --context minikube -n kube-system rollout restart
 deploy/coredns`) after fixing the VM's DNS, or point its `forward` at a reachable DNS server.
 
+## 4. DwC-A, tabular and checklists (Round B)
+
+Every format the ws accepts now runs as a workflow; the pipelines workers are simulated as in
+section 2. A DwC-A upload:
+
+```sh
+curl -u alice:alice -F file=@occurrences-dwca.zip http://127.0.0.1:18081/validation   # note "key"
+task balancer
+task complete UUID=<key> STEP=VALIDATOR_VALIDATE_ARCHIVE        # OUTCOME=INVALID rejects
+task complete UUID=<key> STEP=VALIDATOR_DWCA_TO_VERBATIM
+task complete UUID=<key> STEP=VALIDATOR_VERBATIM_TO_IDENTIFIER
+task complete UUID=<key> STEP=VALIDATOR_VERBATIM_TO_INTERPRETED
+task complete UUID=<key> STEP=VALIDATOR_COLLECT_METRICS
+curl -u alice:alice http://127.0.0.1:18081/validation/<key>
+```
+
+A DwC-A whose `meta.xml` core is Taxon (or a ColDP) is a checklist: after the archive check it
+waits for ChecklistBank. The engine sends the `VALIDATOR_CHECKLISTBANK` request to the ws, which
+records the wait (`GET /validation/<key>` shows `WAITING_FOR_CHECKLISTBANK` on the archive step).
+Simulate ChecklistBank calling back, then the pipelines checklist validator's evaluation:
+
+```sh
+task complete UUID=<key> STEP=VALIDATOR_VALIDATE_ARCHIVE        # answers with clbDatasetKey 4711
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"datasetKey":4711,"status":"finished","format":"dwca"}' \
+  http://127.0.0.1:18081/validation/clbValidationCallback/<key>  # the ws forwards it (queue
+                                                                 # occurrence.pipelines.checklist.validator)
+task complete UUID=<key> STEP=VALIDATOR_CHECKLISTBANK
+```
+
+A ColDP ends there; a checklist DwC-A continues with `VALIDATOR_DWCA_TO_VERBATIM` as above.
+
 ## What runs where
 
 Namespace `flow-orchestrator-local`. Local ports through `task forward`:

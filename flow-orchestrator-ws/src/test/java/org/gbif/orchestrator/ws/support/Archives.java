@@ -73,6 +73,22 @@ public final class Archives {
     return zip(name, files);
   }
 
+  /** A DwC-A checklist: Taxon core. */
+  public static MockMultipartFile dwcaChecklist(String name) throws IOException {
+    Map<String, String> files = new LinkedHashMap<>();
+    files.put(
+        "meta.xml",
+        "<archive xmlns=\"http://rs.tdwg.org/dwc/text/\" metadata=\"eml.xml\"><core rowType="
+            + "\"http://rs.tdwg.org/dwc/terms/Taxon\"><files><location>taxon.txt"
+            + "</location></files><id index=\"0\"/></core></archive>");
+    files.put("taxon.txt", "taxonID\tscientificName\n1\tPuma concolor\n");
+    files.put(
+        "eml.xml",
+        "<eml:eml xmlns:eml=\"eml://ecoinformatics.org/eml-2.1.1\" packageId=\"p\" system=\"s\">"
+            + "<dataset><title>Cats of the world</title></dataset></eml:eml>");
+    return zip(name, files);
+  }
+
   /** A zip of the given entries (name → content), in order. */
   public static MockMultipartFile zip(String name, Map<String, String> files) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
