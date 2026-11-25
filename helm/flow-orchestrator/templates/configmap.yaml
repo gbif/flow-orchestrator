@@ -8,3 +8,8 @@ data:
   # Added on top of the packaged application.yml (SPRING_CONFIG_ADDITIONAL_LOCATION).
   application.yml: |
 {{ toYaml .Values.config | indent 4 }}
+  {{- with .Values.logbackConfig }}
+  # Replaces the packaged logback-spring.xml (LOGGING_CONFIG in the deployment).
+  logback.xml: |
+{{ . | indent 4 }}
+  {{- end }}

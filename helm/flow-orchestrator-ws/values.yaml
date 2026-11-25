@@ -77,6 +77,12 @@ volumes:
 log:
   level: INFO
 
+# A Logback configuration (XML) replacing the packaged one (console, plain text), for example to
+# send logs to Logstash: logstash-logback-encoder is on the classpath. Mounted as
+# /app/config/logback.xml. Spring extensions (<springProperty>) work; log.level still applies.
+# See values-dev.yaml.example. Empty: the packaged configuration.
+logbackConfig: ""
+
 # Extra env vars, as a list of Kubernetes EnvVar objects.
 extraEnv: []
 

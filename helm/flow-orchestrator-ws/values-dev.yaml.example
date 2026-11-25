@@ -1,0 +1,102 @@
+# Example environment values for flow-orchestrator-ws, for the Helm config repository.
+# Copy, replace hosts, tags and names with the environment's, create the Secret, then:
+#
+#   helm upgrade --install flow-orchestrator-ws ./helm/flow-orchestrator-ws \
+#     -f values-dev.yaml -n <namespace>
+#
+# Keys left out keep the defaults of ./values.yaml. See docs/deployment.md.
+
+image:
+  repository: docker.gbif.org
+  name: flow-orchestrator-ws
+  tag: 0.0.1-SNAPSHOT
+  pullPolicy: Always
+
+# Registry database, schema orchestrator, as the ws role (db/004): writes only the validation
+# tables, reads the workflow tables.
+db:
+  url: jdbc:postgresql://pg-registry.example.org:5432/registry?ApplicationName=flow-orchestrator-ws
+  username: orchestrator_ws
+  schema: orchestrator
+
+rabbit:
+  host: rabbitmq.example.org
+  port: 5672
+  vhost: /
+  username: orchestrator-ws
+
+# A Secret with DB_PASSWORD, RABBIT_PASSWORD and GBIF_APP_SECRET (required), and optionally
+# CLB_API_PASSWORD and SPRING_MAIL_PASSWORD:
+#   kubectl -n <namespace> create secret generic flow-orchestrator-ws \
+#     --from-literal=DB_PASSWORD=... --from-literal=RABBIT_PASSWORD=... \
+#     --from-literal=GBIF_APP_SECRET=... --from-literal=CLB_API_PASSWORD=...
+secrets:
+  existingSecret: flow-orchestrator-ws
+
+settings:
+  # Remote authentication and the user lookup for emails (the registry API of the environment).
+  GBIF_API_URL: https://api.gbif-dev.org/v1/
+  GBIF_APP_KEY: gbif.validator-ws.dev
+  # Links in the emails: the base URL only; the templates add /tools/data-validator/<key>.
+  GBIF_VALIDATOR_URL: https://old.gbif-dev.org
+  GBIF_PORTAL_URL: https://www.gbif-dev.org
+  MAIL_HOST: smtp.example.org
+  MAIL_PORT: "25"
+  MAIL_FROM: no-reply@gbif.org
+  MAIL_BCC: ""
+  # ChecklistBank: the poller of checklist validations (its callback comes to this service).
+  CLB_API_URL: https://api.checklistbank.org/
+  CLB_API_USER: gbif-validator
+  # Uploads up to this size (also the multipart limit).
+  UPLOAD_MAX_SIZE: 1GB
+
+# The shared validation store: the same volume the pipelines archive validator, the validator
+# DwC-A to verbatim and the validation analyser mount as their archive repository. The service
+# writes <store>/<validationKey>/.
+volumes:
+  store:
+    persistentVolumeClaim:
+      claimName: validation-store
+
+# Run as the uid/gid that owns the shared store, if it is not the image's.
+podSecurityContext: {}
+
+log:
+  level: INFO
+
+# Logs to Logstash (ELK) as JSON, and to the console. Copy the destination and the appender type
+# (TCP here; LogstashUdpSocketAppender for UDP) from the environment's other services.
+logbackConfig: |
+  <configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <springProperty name="appName" source="spring.application.name"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+      <encoder>
+        <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40} - %msg%n</pattern>
+      </encoder>
+    </appender>
+
+    <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+      <destination>logstash.example.org:5000</destination>
+      <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <customFields>{"service":"${appName}","environment":"dev"}</customFields>
+      </encoder>
+    </appender>
+
+    <logger name="org.gbif.common.messaging" level="INFO"/>
+    <logger name="org.springframework" level="WARN"/>
+
+    <root level="INFO">
+      <appender-ref ref="CONSOLE"/>
+      <appender-ref ref="LOGSTASH"/>
+    </root>
+  </configuration>
+
+resources:
+  requests:
+    memory: 768Mi
+    cpu: 250m
+  limits:
+    memory: 2Gi
+    cpu: 1000m

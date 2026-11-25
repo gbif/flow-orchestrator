@@ -52,6 +52,10 @@ spec:
               value: {{ .Values.jvmOptions | quote }}
             - name: SPRING_CONFIG_ADDITIONAL_LOCATION
               value: "file:/app/config/"
+            {{- if .Values.logbackConfig }}
+            - name: LOGGING_CONFIG
+              value: /app/config/logback.xml
+            {{- end }}
             - name: DB_URL
               value: {{ .Values.db.url | quote }}
             - name: DB_USERNAME

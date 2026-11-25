@@ -89,7 +89,7 @@ CI (`Jenkinsfile`) publishes `docker.gbif.org/flow-orchestrator:<version>` and
 
 | Chart | Deploys |
 |---|---|
-| `helm/flow-orchestrator` | The engine. One release per domain, each with its own `orchestrator.domain` and `orchestrator.messagingPrefix`. The default `config` holds the `validation-dwcdp` workflow and its step routing. |
+| `helm/flow-orchestrator` | The engine. One release per domain, each with its own `orchestrator.domain` and `orchestrator.messagingPrefix`. The default `config` holds the validation workflows (DwC-DP, DwC-A, checklist DwC-A, tabular, spreadsheet, ColDP) and their step routing. |
 | `helm/flow-orchestrator-ws` | The validation web service. Mount the shared validation store with `volumes.store`. |
 
 `values.yaml` has neutral defaults only, and `values-local.yaml` the settings for the local minikube
@@ -102,6 +102,11 @@ chart refuses to render without one. Probes use Actuator's liveness and readines
 helm upgrade --install flow-orchestrator-validation helm/flow-orchestrator -f <environment values>
 helm upgrade --install flow-orchestrator-ws helm/flow-orchestrator-ws -f <environment values>
 ```
+
+Example environment values: `helm/flow-orchestrator/values-dev.yaml.example` and
+`helm/flow-orchestrator-ws/values-dev.yaml.example`. The checklist for deploying to an environment
+(builds, database, queues, every service's settings, cut-over and smoke tests) is
+[docs/deployment.md](docs/deployment.md).
 
 ## Configuration
 

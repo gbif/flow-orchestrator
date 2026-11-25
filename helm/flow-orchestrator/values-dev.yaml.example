@@ -1,0 +1,81 @@
+# Example environment values for the engine (validation domain), for the Helm config repository.
+# Copy, replace hosts, tags and names with the environment's, create the Secret, then:
+#
+#   helm upgrade --install flow-orchestrator-validation ./helm/flow-orchestrator \
+#     -f values-dev.yaml -n <namespace>
+#
+# Keys left out keep the defaults of ./values.yaml, which include the validation workflows and
+# their step routing (config.orchestrator.workflows / steps). See docs/deployment.md.
+
+image:
+  repository: docker.gbif.org
+  name: flow-orchestrator
+  # The dev branch build (Jenkins publishes <pom version> for dev; check the image exists).
+  tag: 0.0.1-SNAPSHOT
+  pullPolicy: Always
+
+# One release per domain: this is the validation instance. Its queues and routing keys are named
+# after the prefix (orchestrator.validation.commands, validation.step.completed, ...).
+orchestrator:
+  domain: VALIDATION
+  messagingPrefix: validation
+
+# Registry database, schema orchestrator (db/001-004 applied by hand). The role owns the schema.
+db:
+  url: jdbc:postgresql://pg-registry.example.org:5432/registry?ApplicationName=flow-orchestrator-validation
+  username: orchestrator
+  schema: orchestrator
+
+rabbit:
+  host: rabbitmq.example.org
+  port: 5672
+  # The vhost where pipelines, the analyser and the ws exchange messages (the occurrence exchange
+  # must be reachable: pipelines requests go to the balancer there).
+  vhost: /
+  username: orchestrator
+
+# A Secret with the keys DB_PASSWORD and RABBIT_PASSWORD (do not put passwords here):
+#   kubectl -n <namespace> create secret generic flow-orchestrator-validation \
+#     --from-literal=DB_PASSWORD=... --from-literal=RABBIT_PASSWORD=...
+secrets:
+  existingSecret: flow-orchestrator-validation
+
+log:
+  level: INFO
+
+# Logs to Logstash (ELK) as JSON, and to the console. Copy the destination and the appender type
+# (TCP here; LogstashUdpSocketAppender for UDP) from the environment's other services.
+logbackConfig: |
+  <configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <springProperty name="appName" source="spring.application.name"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+      <encoder>
+        <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40} - %msg%n</pattern>
+      </encoder>
+    </appender>
+
+    <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+      <destination>logstash.example.org:5000</destination>
+      <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <customFields>{"service":"${appName}","environment":"dev"}</customFields>
+      </encoder>
+    </appender>
+
+    <logger name="org.gbif.common.messaging" level="INFO"/>
+    <logger name="org.springframework" level="WARN"/>
+
+    <root level="INFO">
+      <appender-ref ref="CONSOLE"/>
+      <appender-ref ref="LOGSTASH"/>
+    </root>
+  </configuration>
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 250m
+  limits:
+    memory: 1Gi
+    cpu: 1000m

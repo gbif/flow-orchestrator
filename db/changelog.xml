@@ -11,12 +11,12 @@
 
   <!-- As a role that may create schemas. PostgreSQL only. Role names are placeholders. -->
   <changeSet id="orchestrator-1" author="nreibke" runInTransaction="false" ignore="true">
-    <sqlFile path="db/001-orchestrator-schema.sql" splitStatements="true" stripComments="true"/>
+    <sqlFile path="./001-orchestrator-schema.sql" splitStatements="true" stripComments="true"/>
   </changeSet>
 
   <!-- As the orchestrator role, so it owns the tables. -->
   <changeSet id="orchestrator-2" author="nreibke">
-    <sqlFile path="db/002-orchestrator-tables.sql" splitStatements="true"/>
+    <sqlFile path="./002-orchestrator-tables.sql" splitStatements="true"/>
     <rollback>
       <sql>
         DROP TABLE orchestrator.workflow_report;
@@ -31,7 +31,7 @@
 
   <!-- Validation tables for flow-orchestrator-ws (Round A), as the orchestrator role. -->
   <changeSet id="orchestrator-3" author="nreibke">
-    <sqlFile path="db/003-validation-tables.sql" splitStatements="true"/>
+    <sqlFile path="./003-validation-tables.sql" splitStatements="true"/>
     <rollback>
       <sql>
         DROP TABLE orchestrator.shedlock;
@@ -42,6 +42,6 @@
 
   <!-- Grants for flow-orchestrator-ws. PostgreSQL only. Role names are placeholders. -->
   <changeSet id="orchestrator-4" author="nreibke" runInTransaction="false" ignore="true">
-    <sqlFile path="db/004-validation-grants.sql" splitStatements="true" stripComments="true"/>
+    <sqlFile path="./004-validation-grants.sql" splitStatements="true" stripComments="true"/>
   </changeSet>
 </databaseChangeLog>
