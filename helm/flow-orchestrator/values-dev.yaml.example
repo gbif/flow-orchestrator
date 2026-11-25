@@ -40,6 +40,12 @@ rabbit:
 secrets:
   existingSecret: flow-orchestrator-validation
 
+# YuniKorn labels, as the environment's other services have them (the queue is the environment's).
+yunikorn:
+  enabled: true
+  appId: flow-orchestrator-validation
+  queue: root.dev.<queue>
+
 log:
   level: INFO
 

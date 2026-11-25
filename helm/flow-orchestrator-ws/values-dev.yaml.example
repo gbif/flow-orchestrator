@@ -61,6 +61,12 @@ volumes:
 # Run as the uid/gid that owns the shared store, if it is not the image's.
 podSecurityContext: {}
 
+# YuniKorn labels, as the environment's other services have them (the queue is the environment's).
+yunikorn:
+  enabled: true
+  appId: flow-orchestrator-ws
+  queue: root.dev.<queue>
+
 log:
   level: INFO
 

@@ -15,6 +15,10 @@ spec:
         {{- include "flow-orchestrator.labels" . | nindent 8 }}
         app.kubernetes.io/version: {{ .Values.image.tag | quote }}
         app.kubernetes.io/component: engine
+      {{- if .Values.yunikorn.enabled }}
+        yunikorn.apache.org/app-id: {{ .Values.yunikorn.appId | required "yunikorn.appId is required when yunikorn.enabled" | quote }}
+        yunikorn.apache.org/queue: {{ .Values.yunikorn.queue | required "yunikorn.queue is required when yunikorn.enabled" | quote }}
+      {{- end }}
       annotations:
         # Restart the pods when the configuration or the secret values change.
         checksum: {{ toYaml .Values | sha256sum }}

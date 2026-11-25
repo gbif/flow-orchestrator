@@ -180,6 +180,13 @@ probes:
     periodSeconds: 10
     failureThreshold: 3
 
+# YuniKorn scheduling labels on the pods, as the environment's other services have them, for
+# example appId: flow-orchestrator-validation, queue: root.dev.<queue>.
+yunikorn:
+  enabled: false
+  appId: ""
+  queue: ""
+
 podSecurityContext: {}
 containerSecurityContext: {}
 nodeSelector: {}
