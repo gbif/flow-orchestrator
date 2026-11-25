@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import io.micrometer.core.instrument.Counter;
@@ -152,7 +153,10 @@ public class OutboxRelay implements SmartLifecycle {
         LOG.debug("Full outbox batch published, continuing");
       }
     } catch (RuntimeException e) {
-      LOG.warn("Outbox relay pass failed: {}", e.toString());
+      // the root cause names the real problem (for example the database refusing the login)
+      Throwable cause = NestedExceptionUtils.getMostSpecificCause(e);
+      LOG.warn(
+          "Outbox relay pass failed: {}{}", e, cause == e ? "" : " caused by " + cause);
     }
   }
 
