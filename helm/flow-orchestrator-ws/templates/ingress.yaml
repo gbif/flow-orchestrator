@@ -1,0 +1,36 @@
+{{- if .Values.ingress.enabled }}
+{{- $host := .Values.ingress.host }}
+{{- if not $host }}
+{{- $host = printf "%s.%s" .Values.ingress.subdomain (.Values.ingress.domain | required "ingress.domain (or ingress.host) is required when ingress.enabled") }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "flow-orchestrator-ws.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flow-orchestrator-ws.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - pathType: Prefix
+            path: "/"
+            backend:
+              service:
+                name: {{ include "flow-orchestrator-ws.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

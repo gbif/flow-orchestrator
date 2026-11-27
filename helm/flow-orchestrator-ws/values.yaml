@@ -93,6 +93,30 @@ waitFor: []
 service:
   port: 8080
 
+# An Ingress to the service, so ChecklistBank can reach the callback
+# (POST /validation/clbValidationCallback/<key>) and the gateway or the frontend can reach the API.
+# The service serves /validation/... at its root: the /v1 prefix is the gateway's.
+# Host: ingress.host, or <subdomain>.<domain> (as the environment's other services).
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  subdomain: flow-orchestrator-ws
+  domain: ""
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # Uploads: nginx refuses bodies over 1m by default. Keep it at least settings.UPLOAD_MAX_SIZE
+    # (application default 1GB).
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    # Stream uploads to the service instead of buffering them on the controller first.
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  # A TLS Secret for the host; empty: no tls section (TLS ends elsewhere, or none).
+  tls:
+    secretName: ""
+
 probes:
   startup:
     periodSeconds: 5

@@ -61,6 +61,12 @@ volumes:
 # Run as the uid/gid that owns the shared store, if it is not the image's.
 podSecurityContext: {}
 
+# The Ingress: ChecklistBank's callback and the API. With domain gbif-dev.org the host is
+# flow-orchestrator-ws.gbif-dev.org; set ingress.host for another name.
+ingress:
+  enabled: true
+  domain: gbif-dev.org
+
 # YuniKorn labels, as the environment's other services have them (the queue is the environment's).
 yunikorn:
   enabled: true
