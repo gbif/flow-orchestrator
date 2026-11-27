@@ -10,6 +10,8 @@ Each topic is labelled:
 - **Proposed**: the recommended approach, not yet agreed.
 - **Open**: needs a decision, information or an experiment.
 
+A short summary for people is in [`overview.md`](overview.md).
+
 The port is complete; the old module was removed from pipelines (last version: commit
 `dffcecb0b`). Implementation details of finished rounds are in the git history; this document keeps
 the decisions that still hold. Current status, repositories and branches: [`UPDATE.md`](../UPDATE.md).
