@@ -1,8 +1,7 @@
 # flow-orchestrator in brief
 
 A short overview for people. The full design and its decisions are in
-[`architecture.md`](architecture.md), the current state and branches in
-[`UPDATE.md`](../UPDATE.md), and deployment in [`deployment.md`](deployment.md).
+[`architecture.md`](architecture.md), Deployment in [`deployment.md`](deployment.md).
 
 ## What it is
 
